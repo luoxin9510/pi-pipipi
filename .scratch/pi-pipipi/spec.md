@@ -1,295 +1,107 @@
-# pi-pipipi: spec (v1)
+# pi-pipipi v1: Claude Code-compatible subagents for pi codemode
 
-Source of truth for decisions: `decisions.md` (incl. "Grill 2", which approved this spec on 2026-11-07). This spec turns them into modules, contracts and tests.
-Facts checked against `@earendil-works/pi-coding-agent@1.5.0` docs. Items marked **[verify]** are confirmed during implementation of the ticket that needs them.
+Status: ready-for-agent
 
-## 1. What it is
+Decisions behind this spec: `decisions.md` (grill 1, and "Grill 2" of 2026-11-07, which approved it).
 
-A pi package with one extension. The extension registers a tool `Agent` that codemode scripts call to run a Claude Code-compatible subagent in a `pi` subprocess. The script gets a structured result and decides what reaches the model.
+## Problem Statement
 
-```js
-// inside a codemode script in the main session
-const [a, b] = await Promise.all([
-  tools.Agent({ description: "find auth code", prompt: "...", subagent_type: "Explore" }),
-  tools.Agent({ description: "find session store", prompt: "...", subagent_type: "Explore" }),
-]);
-return [a.output, b.output].join("\n---\n");
-```
+I use pi with codemode, where the model writes a script that calls tools and only the script's result reaches the
+model. I want that script to hand work to subagents the way Claude Code does: several focused agents in parallel, each
+with its own prompt, tools and model, returning a short report. pi has no such tool. I also already have Claude Code
+agent definitions (`.claude/agents/*.md`) that I don't want to rewrite for pi.
 
-## 2. Module layout
+## Solution
 
-```
-package.json            # name pi-pipipi, keywords [pi-package], pi.extensions ["./src/index.ts"]
-src/index.ts            # extension entry: read config, register Agent tool (unless nested)
-src/config.ts           # read + validate the `pipipi` settings block
-src/definition.ts       # parse one agent .md file -> AgentDefinition | skip reason
-src/discovery.ts        # scan the five sources, apply precedence, collect warnings
-src/builtin/*.md        # Explore, Plan, general-purpose (Claude Code format)
-src/resolve.ts          # definition + call input + config -> ChildSpec (argv, env, prompt files)
-src/runner.ts           # spawn pi, parse JSONL, enforce maxTurns, collect usage -> RunResult
-src/agent-tool.ts       # tool schema, execute(): discovery -> resolve -> semaphore -> runner
-test/fake-pi.mjs        # scripted stand-in for the pi binary
-test/*.test.ts          # node:test
-AGENTS.md  README.md  LICENSE (Apache-2.0, kept)
-```
+A pi package with one extension. It registers a tool named `Agent` that only codemode scripts can call. Each call runs
+one agent definition, in Claude Code's file format, as a separate `pi` process in JSON mode, and returns a structured
+result: status, the agent's final message, token usage and cost, and an id to resume it later. A script can run many
+agents with `Promise.all`, filter their output, and return only what the model needs. Existing Claude Code agent files
+work unchanged; pi-pipipi maps their fields to pi's command-line flags. Subagents run on Claude Haiku 5.5 unless the
+call or the definition says otherwise.
 
-Runtime dependency: `yaml` (frontmatter parsing). Types from `@earendil-works/pi-coding-agent` and `typebox`, which pi supplies to extensions (dev dependencies only).
-Tests run with `node --test --experimental-strip-types` on Node 22. No build step; pi loads `.ts` extensions directly.
+## User Stories
 
-## 3. Config
+1. As a codemode script author, I want to call `tools.Agent({ description, prompt, subagent_type })`, so that I can hand a task to a subagent from a script.
+2. As a script author, I want to run several agents with `Promise.all`, so that independent searches run in parallel.
+3. As a script author, I want each call to resolve to a structured object (status, agentId, agentType, output, model, usage, turns, durationMs, warnings, error), so that I can filter and combine results in code.
+4. As a script author, I want `output` to be only the agent's final message, so that intermediate turns and tool output don't flood my script.
+5. As a script author, I want a failed child run to return `status: "failed"` with an `error` message instead of throwing, so that one failure in a `Promise.all` batch does not lose the other results.
+6. As a script author, I want caller mistakes (unknown agent, bad resume id, an agent left with no usable tools) to throw, so that I notice bugs in my script at once.
+7. As a script author, I want to resume an earlier agent with `resume: agentId`, so that I can ask a follow-up question without re-explaining the task.
+8. As a script author, I want a resume without `subagent_type` to reuse the agent type of the first run, so that a follow-up keeps the same prompt and tools.
+9. As a script author, I want a resume that names a different `subagent_type` to throw, so that I don't silently continue a session with the wrong agent.
+10. As a script author, I want to override the model per call (`model`) and the thinking level per call (`effort`), so that I can spend more on hard tasks.
+11. As a script author, I want `subagent_type` to default to `general-purpose`, so that quick delegations need no extra argument.
+12. As a script author, I want calls written for Claude Code (with `run_in_background`, `isolation` or `name`) to still run, with a warning that those fields are ignored, so that I can reuse snippets.
+13. As a pi user, I want the tool description to list the available agents with their descriptions, so that the model knows what it can delegate to.
+14. As a pi user, I want subagents to run on haiku by default, so that delegation is cheap unless I ask for more.
+15. As a pi user, I want `inherit` to mean my session's current model, used only when written explicitly, so that the default never surprises me with an expensive model.
+16. As a pi user, I want the aliases `opus`, `sonnet`, `haiku` and `fable` to map to the same-name Anthropic models, so that Claude Code agent files mean what their authors intended.
+17. As a pi user without Anthropic credentials, I want to remap any alias, or the default model, in settings, so that agents run on my provider.
+18. As a pi user, I want the README to explain model selection clearly, so that I know why an agent ran on haiku and how to change it.
+19. As a pi user, I want child token usage and cost to count toward my session totals, so that `/session` and the footer show the true cost.
+20. As a pi user, I want to see progress while an agent runs (turn count and last tool), so that long runs are not a black box.
+21. As a pi user, I want to abort the parent run and have every child stop, so that nothing keeps running and spending after I cancel.
+22. As a pi user, I want at most 20 children running at once in a pi process (configurable), with extra calls queued, so that a large batch can't overload my machine.
+23. As a pi user, I want children not to get the `Agent` tool, so that agents can't spawn agents (nesting is one level in v1).
+24. As a pi user, I want children to follow my project trust decision, so that an untrusted project's extensions and settings don't load in a child either.
+25. As a pi user, I want child sessions stored next to the parent session, grouped by parent, so that they don't clutter my session list and are easy to find.
+26. As a pi user whose session is not persisted, I want children to be in-memory too, and a clear error if I try to resume one.
+27. As an agent author, I want my existing `.claude/agents/*.md` files to load unchanged, so that I keep one set of definitions for both tools.
+28. As an agent author, I want project agents in `.pi/agents/` and `.claude/agents/` (from my working directory up to the repo root, closest first) to override user agents in `~/.pi/agent/agents/` and `~/.claude/agents/`, which override the built-ins, so that the most specific definition wins.
+29. As an agent author, I want subdirectories of those folders to be searched, so that I can organise agents in folders.
+30. As an agent author, I want edits to an agent file to apply on the next call without reloading pi, as in Claude Code.
+31. As an agent author, I want an invalid file (no frontmatter, bad YAML, missing or invalid `name`, missing `description`, a wrongly typed field) to be skipped with a visible warning naming the file and the reason, so that one bad file doesn't break the others and I can fix it.
+32. As an agent author, I want two files with the same name in the same folder to produce a warning, so that I notice the duplicate.
+33. As an agent author, I want the body of my file to replace pi's default system prompt, so that the child follows exactly my instructions, as in Claude Code.
+34. As an agent author, I want `tools` and `disallowedTools` with Claude Code names (Read, Write, Edit, Bash, Grep, Glob, LS, mcp__…) to be mapped to pi tools, so that tool limits work unchanged.
+35. As an agent author, I want a `disallowedTools` rule like `Bash(git push *)` to remove the whole tool, since pi has no per-command rules, so that a deny never becomes an allow.
+36. As an agent author, I want tools that pi lacks (WebFetch, NotebookEdit, …) to be dropped with a warning, or mapped to a pi tool through settings, so that the agent still runs.
+37. As an agent author, I want an agent without `tools` to get my normal pi tools and extensions, so that it behaves like my everyday pi session.
+38. As an agent author, I want `skills` to preload the full text of each named skill into the system prompt, found in pi's skill folders and in `.claude/skills`, so that Claude Code skill preloading works.
+39. As an agent author, I want a missing skill to produce a warning rather than a failure, as in Claude Code.
+40. As an agent author, I want `effort` to set the child's thinking level, `maxTurns` to cap its turns, and `omitClaudeMd` to skip context files, as in Claude Code.
+41. As an agent author, I want a run that hits `maxTurns` to return `status: "partial"` with the latest output, so that I still get what it found.
+42. As an agent author, I want Claude Code fields pi-pipipi does not support yet (mcpServers, isolation, hooks, memory, …) to be accepted with a warning, so that my files still load.
+43. As a pi user, I want built-in `Explore` (read-only search), `Plan` (read-only planning) and `general-purpose` agents, so that delegation works with no setup.
+44. As a pi user, I want to override a built-in agent by writing my own file with the same name.
+45. As a pi user, I want very long prompts (over 100 KB) to still reach the child, so that I can pass large context.
+46. As a pi user, I want bad pi-pipipi settings to fail with a message that names the bad key, so that I can fix my config.
 
-Read from `pi.getSettings().pipipi` (verified: unknown keys survive), on every `session_start`.
+## Implementation Decisions
 
-```jsonc
-"pipipi": {
-  "models": {                       // merged over these defaults; Claude aliases -> pi model pattern (--model)
-    "opus":   "anthropic/claude-opus-5-5",
-    "sonnet": "anthropic/claude-sonnet-5-5",
-    "haiku":  "anthropic/claude-haiku-5-5",
-    "fable":  "anthropic/claude-fable-5-1"
-  },
-  "defaultModel": "haiku",          // optional; default "haiku"; like CLAUDE_CODE_SUBAGENT_MODEL
-  "toolMap": { "WebFetch": "mcp__fetch__fetch" },  // optional; merged over the built-in map
-  "maxConcurrent": 20,              // optional; default 20
-  "piCommand": "pi"                 // optional; path to the pi binary (tests point it at fake-pi)
-}
-```
+Modules:
 
-Validation is at this boundary: wrong types throw at extension load with the offending key named. All keys optional.
+- **Config**: reads the `pipipi` block from pi's merged settings at every session start (verified: pi keeps unknown keys). Keys, all optional: `models` (alias → pi model pattern, merged over built-in defaults `opus`/`sonnet`/`haiku` → `anthropic/claude-{opus,sonnet,haiku}-5-5`, `fable` → `anthropic/claude-fable-5-1`), `defaultModel` (default `haiku`), `toolMap` (Claude name → pi name, merged over the built-in map), `maxConcurrent` (default 20), `piCommand` (default `pi`). Wrong types throw naming the key.
+- **Definition parser**: one agent file → a definition or a skip reason. Skip reasons match Claude Code: opening `---` not on the first line, frontmatter not closed, YAML error, `name` missing / not a string / longer than 256 / containing `:` / starting with `-`, `description` missing, and a supported field with the wrong type. `tools`, `disallowedTools` and `skills` accept a comma-separated string or a YAML list. Unsupported Claude Code fields (mcpServers, isolation, autoCompactWindow, color, permissionMode, hooks, memory, background, initialPrompt, experimental) are recorded as inert; other unknown keys are ignored.
+- **Discovery**: scans the sources in priority order (project `.pi/agents` per directory from cwd up to the nearest directory containing `.git`, closest first; then project `.claude/agents` the same way; then `~/.pi/agent/agents`, `~/.claude/agents`, built-ins), recursively for `*.md`. Identity is `name`. Higher sources win. Within one folder the first file in sorted path order wins, with a warning. Without a repo, only cwd is scanned. Returns agents and warnings. Runs at session start (tool description, warnings shown via UI notify) and on every call.
+- **Built-in agents**: three agent files in Claude Code format, with prompts written for pi-pipipi, modelled on Claude Code's roles. Explore and Plan: tools Read, Grep, Glob, LS, Bash; deny Write, Edit; omitClaudeMd. general-purpose: no tool limits. None sets a model, so all use the default.
+- **Resolver**: definition + call input + config + parent context → child spec (argv, environment, system prompt text, prompt, model, maxTurns, agentId, warnings).
+  - Model: call `model` > definition `model` > `defaultModel`. `inherit` → parent model (throws if none); an alias → `models[alias]`; anything else passes to `--model` unchanged.
+  - Thinking: call `effort` > definition `effort` > parent thinking level, passed as `--thinking`.
+  - Tools: built-in map Read→read, Write→write, Edit→edit, Bash→bash, Grep→grep, Glob→find, LS→ls, merged with `toolMap`; lowercase pi names and `mcp__…` pass through; Agent and Task are dropped silently; other names are dropped with a warning. `Name(...)` deny rules reduce to `Name`. Denied tools go to `--exclude-tools`; with `tools` present, allowed minus denied go to `--tools`, and an empty result throws. Without `tools`, no `--tools` flag.
+  - System prompt (replaces pi's default via `--system-prompt <file>`): the definition body, then each preloaded skill as `# Skill: <name>` + full SKILL.md text, then an environment block (working directory, platform, date). Skills are found by frontmatter name (else directory name) in `.pi/skills`, `.agents/skills`, `.claude/skills` from cwd to the repo root, then `~/.pi/agent/skills`, `~/.agents/skills`, `~/.claude/skills`; searched recursively for folders holding SKILL.md, following symlinks, not descending into a skill folder. Extensions cannot read pi's loaded skill list (verified), and skill paths from settings or packages are not searched in v1.
+  - Flags: `--mode json -p`, model, thinking, tools, `--no-context-files` when omitClaudeMd, `--approve` or `--no-approve` mirroring the parent's trust, session flags, `--system-prompt`, then `--` and the prompt. Prompts over 100 KB are written to a temp file and passed as `@<file>` (Linux limits one argument to 128 KiB). Environment: the parent's plus `PIPIPI_DEPTH=1`. Working directory: the parent's.
+  - Sessions: with a persisted parent, `--session-dir <parent session dir>/subagents/<parent session id> --session-id <agentId>`; otherwise `--no-session`. agentId is 12 random `[a-z0-9]` characters, or the resume id.
+- **Resume**: a first run with a persisted parent writes `<agentId>.json` = `{ agentType }` beside the child session. A resume id must match `[A-Za-z0-9._-]+`, needs a persisted parent, and needs that file; otherwise it throws. The stored type is used when `subagent_type` is omitted; a different one throws.
+- **Runner**: spawns the child with stdin closed and reads stdout as bytes, splitting records on LF only (JSON strings may hold U+2028/U+2029; Node's readline would split on them). The first record must be the session header. Assistant `message_end` events add to usage and set output when they carry text; a `stopReason` of `error` records the error message. `turn_end` counts turns and reports progress; reaching `maxTurns` sends SIGTERM and yields `partial`. `agent_settled` marks success. Completed = exit 0, settled, no error. Failed = non-zero exit, not settled, assistant error, unparseable line, missing header, or spawn failure, with `error` = assistant error, else the last 30 stderr lines, else a description. Abort sends SIGTERM, then SIGKILL after 5 s, and throws `aborted`. Temp files are removed when the run ends.
+- **Agent tool**: name `Agent`, exposure `codemode`, parameters `description`, `prompt`, optional `subagent_type`, `model`, `effort` (low/medium/high/xhigh/max), `resume`, `run_in_background`, `isolation`, `name`. Declares an output schema; returns the result as structured content, as details, and as `usage` (so pi adds it to session totals; verified that codemode reports nested tool usage through the session), plus a text summary; `isError` when failed. Execution: resolve resume type → discover → resolve → wait for a slot in a process-wide semaphore → run → release. Progress updates read `<description>: turn N, <last tool>`.
+- **Extension entry**: does nothing when `PIPIPI_DEPTH` is set. Otherwise, on every session start: read config, discover, register the tool with a description that lists the agents (a snapshot until `/reload`), and show discovery warnings when a UI exists.
 
-## 4. Agent definitions
+## Testing Decisions
 
-### 4.1 Parsing (`definition.ts`)
+- One seam: the extension loaded against a fake pi extension API, with the `Agent` tool's `execute` called directly, and a scripted fake `pi` binary (configured through `piCommand`) that replays a JSONL scenario, records its argv, environment, working directory, system prompt and prompt file, and exits with a chosen code. A temporary repo (with `.git`) and a temporary HOME isolate discovery from the real machine.
+- Tests assert external behaviour only: what the tool returns, what it throws, what warnings and description it produces, and what the child was started with. No test calls an internal module directly.
+- Areas to cover: definition parsing and skip reasons; discovery precedence, walk-up and duplicates; a Claude Code docs example loading unchanged; model selection (default haiku, aliases, overrides, explicit inherit); tool mapping and deny rules; skills preloading (recursive, symlinked, missing); flags, trust and environment; completed runs with summed usage; maxTurns; each failure mode; U+2028 framing; abort; resume with stored type, mismatch and unknown id; concurrency queuing; long prompts via file; no registration when nested; config errors.
+- Tests never run the test command themselves.
+- Real-model smoke test (manual, by the owner): a codemode session that runs two Explore agents in parallel, then resumes one without `subagent_type`. Documented in the README.
 
-Input: file path + text. Output: `{ ok: true, def }` or `{ ok: false, reason }`.
+## Out of Scope
 
-Skip (with reason) exactly where Claude Code skips:
-- opening `---` is not the first line;
-- YAML does not parse;
-- `name` missing, not a string, longer than 256 chars, contains `:`, or starts with `-`;
-- `description` missing.
+Background runs, fork, worktree isolation, hooks, per-agent MCP servers, memory, a budget cap, nesting deeper than one level, skill paths from settings or packages, custom TUI rendering beyond progress text, the mp workflow, and work/dev modes.
 
-`AgentDefinition`:
+## Further Notes
 
-```ts
-interface AgentDefinition {
-  name: string;
-  description: string;
-  prompt: string;                 // body after the closing ---, trimmed
-  tools?: string[];               // comma string or YAML list, split + trimmed
-  disallowedTools?: string[];
-  model?: string;
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
-  maxTurns?: number;              // positive integer
-  skills?: string[];
-  omitClaudeMd?: boolean;
-  source: string;                 // file path, or "builtin:<name>"
-  inert: string[];                // tier B/C fields present in the file
-}
-```
-
-A tier A field with a wrong type (e.g. `maxTurns: "ten"`) is a skip reason, not a silent default.
-Tier B fields (`mcpServers`, `isolation`, `autoCompactWindow`, `color`) and tier C fields (`permissionMode`, `hooks`, `memory`, `background`, `initialPrompt`, `experimental`) are recorded in `inert`. Any other key is ignored silently, as in Claude Code.
-
-### 4.2 Discovery (`discovery.ts`)
-
-Sources, highest priority first:
-1. `.pi/agents/` — every such dir from cwd up to the repo root (closest wins)
-2. `.claude/agents/` — same walk
-3. `~/.pi/agent/agents/`
-4. `~/.claude/agents/`
-5. `src/builtin/`
-
-Each dir is scanned recursively for `*.md`. Identity is `name`, not the file path. A higher source replaces a lower one with the same name. Two files with the same name in the same source: the first in sorted path order wins, and a warning names both.
-The repo root is the nearest ancestor containing `.git`; with none, only cwd is scanned.
-
-Output: `{ agents: Map<string, AgentDefinition>, warnings: string[] }`. Warnings cover: skipped files (path + reason), same-source duplicates, inert fields (`<name>: field "hooks" has no effect in pi-pipipi`).
-
-Discovery runs once at `session_start` (to build the tool description and show warnings via `ctx.ui.notify` when `ctx.hasUI`) and again on every `Agent` call, so edits apply without reload, as in Claude Code. The agent list in the tool description stays a `session_start` snapshot until `/reload` (documented in README).
-
-### 4.3 Built-in agents
-
-Written by us in Claude Code format, matching Claude Code's roles (not its prompt text):
-
-| Name | tools | disallowedTools | model | Other |
-|---|---|---|---|---|
-| `Explore` | `Read, Grep, Glob, LS, Bash` | `Write, Edit` | (omitted: default) | `omitClaudeMd: true`; prompt asks for a compressed report and a thoroughness level from the task |
-| `Plan` | `Read, Grep, Glob, LS, Bash` | `Write, Edit` | (omitted: default) | `omitClaudeMd: true`; returns a step plan with files to change |
-| `general-purpose` | (omitted: pi defaults) | | (omitted: default) | multi-step research and edits |
-
-## 5. Resolving a call (`resolve.ts`)
-
-Pure function. Input: definition, call input, config, parent context (`{ model: "provider/id", thinking, cwd, trusted, sessionDir? }`). Output:
-
-```ts
-interface ChildSpec {
-  command: string;           // config.piCommand
-  args: string[];
-  env: Record<string, string>;
-  systemPrompt: string;      // written to a temp file, path goes into args
-  maxTurns?: number;
-  agentId: string;
-  warnings: string[];
-}
-```
-
-### 5.1 Model
-
-Order: call `model` > definition `model` > `config.defaultModel` (default `haiku`). The parent model is never an implicit fallback.
-- `inherit` (explicit only) → parent model; throws if the parent has none.
-- `opus` | `sonnet` | `haiku` | `fable` → `config.models[alias]`. Built-in defaults: `anthropic/claude-opus-5-5`, `anthropic/claude-sonnet-5-5`, `anthropic/claude-haiku-5-5`, `anthropic/claude-fable-5-1`; settings override per alias. Without Anthropic credentials the child fails (`failed`, provider error) until the user remaps them.
-- Anything else is passed to `--model` as is (full ID or `provider/id`); pi resolves it.
-
-Thinking: call `effort` > definition `effort` > parent thinking level. Passed as `--thinking <level>`.
-
-### 5.2 Tools
-
-1. Map names: built-in map `Read→read, Write→write, Edit→edit, Bash→bash, Grep→grep, Glob→find, LS→ls`, merged with `config.toolMap`. Lowercase pi names and `mcp__…` pass through unchanged. `Agent` and `Task` are dropped (no nesting in v1). Any other name is dropped with a warning `tool "WebFetch" has no pi equivalent`.
-2. `disallowedTools`: `Name(...)` specifiers reduce to `Name` (whole tool removed). Mapped names go to `--exclude-tools`.
-3. `tools` present → mapped names go to `--tools` as a plain list. If the list is empty after mapping and deny, throw `agent "<name>" has no usable tools`.
-4. `tools` absent → no `--tools` flag; the child gets the user's pi defaults (`defaultTools`, e.g. codemode, and every installed extension) minus the excludes. pi-pipipi does not register in children (`PIPIPI_DEPTH`).
-
-### 5.3 System prompt
-
-Claude semantics: the agent body replaces the default prompt. The file passed to `--system-prompt` is:
-1. the definition `prompt`;
-2. preloaded skills: for each name in `skills`, the full `SKILL.md` text under a `# Skill: <name>` heading. Lookup by skill `name` (frontmatter, else directory name) in `.pi/skills`, `.agents/skills`, `.claude/skills` (cwd up to repo root), then `~/.pi/agent/skills`, `~/.agents/skills`, `~/.claude/skills`, each searched recursively for directories holding `SKILL.md` (symlinks followed; a skill directory is not searched further). Verified: extensions cannot read pi's loaded skill list. Skill paths from settings or packages are not searched in v1. Missing skills are skipped with a warning, as in Claude Code. Unlisted skills stay discoverable by the child as normal pi skills;
-3. an environment block: cwd, platform, date.
-
-### 5.4 Flags and env
-
-```
-pi --mode json -p
-   --model <m> --thinking <t>
-   --system-prompt <tmpfile>
-   [--tools a,b,c] [--exclude-tools x,y]
-   [--no-context-files]                     # omitClaudeMd
-   --approve | --no-approve                 # mirrors parent ctx.isProjectTrusted()
-   --session-dir <dir> --session-id <agentId>   # or --no-session, see 5.5
-   <prompt>
-env: PIPIPI_DEPTH=1 (plus the parent's environment)
-```
-
-The prompt is passed as the final argument after `--`. Prompts over 100 KB are written to a temp file and passed as `@<file>` (Linux caps one argv string at 128 KiB), so the child sees them as an attached file.
-
-### 5.5 Sessions and resume
-
-- `agentId`: new random id (`[a-z0-9]{12}`) per call, or the call's `resume` value.
-- Parent session persisted (`ctx.sessionManager.getSessionFile()` defined): `--session-dir <dir of parent session file>/subagents/<parent session id> --session-id <agentId>`. `--session-id` opens the existing session or creates it, so a resume uses the same flags.
-- Parent session in memory: `--no-session`; `resume` throws `resume needs a persisted parent session`.
-- A first run with a persisted parent writes `<session dir>/<agentId>.json` = `{ "agentType": "<name>" }` before spawning.
-- Resume: the id must match `[A-Za-z0-9._-]+`; a missing `<agentId>.json` throws `no subagent session "<id>" to resume`. Without `subagent_type` the stored type is used; a different `subagent_type` throws.
-
-## 6. Running the child (`runner.ts`)
-
-Input: `ChildSpec`, `AbortSignal`, `onProgress`. Output:
-
-```ts
-interface RunResult {
-  status: "completed" | "partial" | "failed";
-  output: string;          // text of the last assistant message
-  usage: Usage;            // summed over assistant message_end events
-  turns: number;           // count of turn_end events
-  durationMs: number;
-  error?: string;          // set when status is "failed"
-}
-```
-
-- Read stdout as bytes, split records on LF only, strip an optional CR, `JSON.parse` each (do not use `readline`; JSON mode may contain U+2028/U+2029 inside strings). A record that is not valid JSON fails the run with the line in `error`.
-- First record must be `{"type":"session",…}`; otherwise failed.
-- `message_end` with `role: "assistant"`: add `usage`; remember text blocks as the latest output; if `stopReason` is `"error"`, remember `errorMessage`.
-- `turn_end`: `turns++`, call `onProgress({ turns, lastTool })`. When `turns === maxTurns`, send SIGTERM; the result is `partial` with the latest output.
-- `tool_execution_start`: track `lastTool` for progress.
-- `agent_settled`: the run is done.
-- Exit: code 0 and `agent_settled` seen and no error → `completed`. Non-zero exit, a missing `agent_settled`, or an assistant error → `failed`, with `error` = assistant `errorMessage`, or the last 30 lines of stderr.
-- Abort signal: SIGTERM the child (pi sends SIGKILL after 5 s itself for `pi.exec`; we do the same here), then throw `aborted`.
-- The temp system prompt file is removed when the run ends.
-
-## 7. The `Agent` tool (`agent-tool.ts`)
-
-```ts
-pi.registerTool({
-  name: "Agent",
-  exposure: "codemode",
-  description,           // built at session_start, lists agent names + descriptions
-  parameters: Type.Object({
-    description: Type.String(),            // 3-5 word label, shown in progress
-    prompt: Type.String(),
-    subagent_type: Type.Optional(Type.String()),   // default "general-purpose"
-    model: Type.Optional(Type.String()),
-    effort: Type.Optional(StringEnum(["low","medium","high","xhigh","max"])),
-    resume: Type.Optional(Type.String()),          // agentId from an earlier result
-    run_in_background: Type.Optional(Type.Boolean()),  // accepted, ignored + warning
-    isolation: Type.Optional(Type.String()),           // accepted, ignored + warning
-    name: Type.Optional(Type.String()),                // accepted, ignored
-  }),
-  outputSchema,          // AgentResult below
-  execute,
-});
-```
-
-`AgentResult` (the `structuredContent`):
-
-```ts
-{
-  status: "completed" | "partial" | "failed";
-  agentId: string;
-  agentType: string;
-  output: string;
-  model: string;           // resolved --model value
-  usage: Usage;
-  turns: number;
-  durationMs: number;
-  warnings: string[];
-  error?: string;
-}
-```
-
-`execute`:
-1. Discover agents; unknown `subagent_type` throws with the list of available names.
-2. Resolve (section 5). Resolution errors throw.
-3. Wait for a slot in a process-wide semaphore of `maxConcurrent`.
-4. Run (section 6), streaming `onUpdate` progress: `<description>: turn N, <lastTool>`.
-5. Return `{ content: [text summary], details: result, structuredContent: result, usage: result.usage, isError: status === "failed" }`. `failed` returns rather than throws so scripts still get the structured result.
-
-Registration is skipped when `PIPIPI_DEPTH` is set (`>= 1`), so children cannot spawn agents.
-
-## 8. Error policy
-
-Follows AGENTS.md: fail fast, validate only at boundaries.
-- Boundaries: settings block, agent files, call input (schema), child JSONL stream, child exit status.
-- Throw: bad config, unknown agent, explicit `inherit` without a parent model, no usable tools, bad resume, abort.
-- Structured `failed`: the child ran and failed (exit code, provider error, bad stream).
-- Warn and continue: skipped definition files, inert fields, unmapped tools, missing skills, ignored call fields. These are Claude Code compatibility behaviours, agreed in decisions.
-- No retries anywhere. pi's own provider retry inside the child is untouched.
-
-## 9. Tests
-
-Highest seam: call the registered tool's `execute` with a fake `pi` (`config.piCommand` → `test/fake-pi.mjs`). The fake reads a scenario from an env var, writes it as JSONL, records its argv and env to a file for assertions, and exits with the scenario's code.
-
-| # | Area | Case |
-|---|---|---|
-| 1 | definition | valid Claude file with every tier A field parses; comma and list `tools` both work |
-| 2 | definition | each skip reason from 4.1 yields the matching reason |
-| 3 | definition | tier B/C fields land in `inert`; unknown keys ignored |
-| 4 | discovery | precedence across the five sources; closest project dir wins; same-source duplicate warns |
-| 5 | discovery | a real `.claude/agents/` file from Claude Code docs loads unchanged |
-| 6 | resolve | model order, default `haiku`, alias defaults and overrides, explicit `inherit` |
-| 7 | resolve | tool mapping, deny-first, `Bash(git push *)` removes bash, `mcp__*` passes, unmapped warns, empty list throws |
-| 8 | resolve | skills preloaded into the prompt file (recursive, symlinked dirs); missing skill warns |
-| 9 | resolve | `omitClaudeMd`, trust flag, session flags, `PIPIPI_DEPTH=1` |
-| 10 | runner | completed run: output = last assistant text, usage summed, turns counted |
-| 11 | runner | `maxTurns` stops the child → `partial` |
-| 12 | runner | provider error, non-zero exit, garbage line, missing session header → `failed` with `error` |
-| 13 | runner | U+2028 inside a JSON string does not split a record |
-| 14 | runner | abort kills the child and throws |
-| 15 | tool | end-to-end execute through fake pi returns the `AgentResult` shape |
-| 16 | tool | resume reuses the agentId, session flags and stored agentType; mismatched type and unknown agentId throw |
-| 17 | tool | concurrency: with `maxConcurrent: 2`, the third call waits |
-| 18 | index | `PIPIPI_DEPTH=1` → `Agent` not registered |
-
-Real-model smoke test (run by the owner): a script in README that calls `Explore` twice in parallel from a codemode session and prints the results and cost.
-
-## 10. Out of scope (v1)
-
-Background runs, fork, worktree isolation, hooks, per-agent MCP servers, memory, budget cap, nesting, custom TUI rendering beyond `onUpdate` text, mp workflow, modes.
+- A prototype implementation already exists on branch `pipipi-v1` (written before this spec was approved). It matches the decisions above except the test layout, which calls internal modules directly.
+- pi docs referenced: extensions, codemode, CLI, JSON event stream, skills, session format (pi 1.5.0).
