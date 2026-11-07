@@ -67,6 +67,27 @@ test("after maxTurns, output of further turns is ignored when the run still sett
   assert.equal(r.usage.input, 30, "the cost of turns past the limit still counts");
 });
 
+test("maxTurns reached on a turn that called tools is partial, even if the next turn settles quickly", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".pi/agents/one.md"), agentFile("name: one\ndescription: d\nmaxTurns: 1"));
+  s.scenario({
+    lines: [
+      ev.session(),
+      ev.assistant("reading a.txt", usage(10, 5, 0.01), { stopReason: "toolUse" }),
+      ev.tool("read"),
+      ev.turnEnd(),
+      ev.assistant("turn 2", usage(20, 5, 0.02)),
+      ev.turnEnd(),
+      ev.settled(),
+    ],
+  });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({ subagent_type: "one" })).structuredContent;
+  assert.equal(r.status, "partial");
+  assert.equal(r.turns, 1);
+  assert.equal(r.output, "reading a.txt");
+});
+
 test("12: provider error, non-zero exit, garbage line, missing session header -> failed with error", async () => {
   const s = sandbox();
   const t = await loadTool({}, { cwd: s.repo });

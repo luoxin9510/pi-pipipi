@@ -111,6 +111,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
     let turnStop: string | undefined; // stopReason of the assistant message in the turn in progress
     let streamError: string | undefined; // bad stream: we stopped the child
     let hitMaxTurns = false;
+    let cutShort = false; // the last allowed turn called tools: partial, whatever the child does next
     let parentAborted = false; // our caller aborted
     let childAborted = false; // the child reported agent_settled with aborted: true
     let stderr = "";
@@ -178,8 +179,14 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
             onProgress({ turns, lastTool });
             if (spec.maxTurns !== undefined && turns >= spec.maxTurns) {
               hitMaxTurns = true;
-              // Let the run settle by itself if this was its last turn anyway.
-              graceTimer = setTimeout(stopChild, SETTLE_GRACE_MS);
+              if (stop === "toolUse") {
+                // The turn called tools, so the run wants another turn: it is cut short here.
+                cutShort = true;
+                stopChild();
+              } else {
+                // Let the run settle by itself if this was its last turn anyway.
+                graceTimer = setTimeout(stopChild, SETTLE_GRACE_MS);
+              }
             }
             break;
           }
@@ -226,7 +233,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
       if (parentAborted) return reject(new Error("aborted"));
 
       const base = { output, usage, turns, durationMs: Date.now() - started };
-      if (hitMaxTurns && !settled) return resolve({ status: "partial", ...base });
+      if (hitMaxTurns && (cutShort || !settled)) return resolve({ status: "partial", ...base });
       const stderrTail = stderr.trimEnd().split("\n").slice(-STDERR_LINES).join("\n");
       const error =
         spawnError?.message ??
