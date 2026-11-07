@@ -2,7 +2,7 @@
 
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AgentDefinition, inertNotice, parseDefinition } from "./definition.ts";
 
@@ -16,14 +16,17 @@ export interface Discovery {
 // cwd, then each parent up to the nearest ancestor containing .git. Never includes the home directory (its
 // .pi/.claude folders are user sources). Without a repo, only cwd.
 export function projectDirs(cwd: string): string[] {
-  const home = homedir();
+  // Compare real paths: HOME may carry a trailing slash or be a symlink. The returned paths keep cwd's spelling.
+  const real = (p: string) => (existsSync(p) ? realpathSync(p) : resolve(p));
+  const home = real(homedir());
+  const isHome = (dir: string) => real(dir) === home;
   const dirs: string[] = [];
-  for (let dir = cwd; dir !== home; dir = dirname(dir)) {
+  for (let dir = cwd; !isHome(dir); dir = dirname(dir)) {
     dirs.push(dir);
     if (existsSync(join(dir, ".git"))) return dirs;
     if (dirname(dir) === dir) break;
   }
-  return cwd === home ? [] : [cwd];
+  return isHome(cwd) ? [] : [cwd];
 }
 
 export const MAX_SCAN_DEPTH = 6; // levels below a source root

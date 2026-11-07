@@ -254,3 +254,24 @@ test("the project walk never includes the home directory", async () => {
   assert.match(t.tool.description, /- c: home-pi/);
   assert.equal(t.notes.some((n) => n.includes("overrides the built-in")), false, `${t.notes}`);
 });
+
+test("home is recognised through a trailing slash or a symlinked HOME, also when home is a git repo", async () => {
+  for (const variant of ["slash", "symlink"] as const) {
+    const s = sandbox();
+    mkdirSync(join(s.home, ".git"), { recursive: true }); // a dotfiles repo at ~
+    const proj = join(s.home, "proj");
+    mkdirSync(proj, { recursive: true });
+    s.write(join(s.home, ".claude/agents/Explore.md"), def("Explore", "user explore"));
+    if (variant === "slash") {
+      process.env.HOME = `${s.home}/`;
+    } else {
+      symlinkSync(s.home, join(s.root, "linkhome"));
+      process.env.HOME = join(s.root, "linkhome");
+    }
+    for (const cwd of [proj, s.home]) {
+      const t = await loadTool({}, { cwd });
+      assert.match(t.tool.description, /- Explore: user explore/, `${variant} ${cwd}`);
+      assert.equal(t.notes.some((n) => n.includes("overrides the built-in")), false, `${variant} ${cwd}: ${t.notes}`);
+    }
+  }
+});
