@@ -1,40 +1,26 @@
 # pi-pipipi: handoff
 
-Status as of 2026-11-07. Branch: `claude/exciting-tesla-w5876m`.
+Status as of 2026-11-07. Branch: `pipipi-v1` (built on `claude/exciting-tesla-w5876m`).
 
 ## Done
 
-- `decisions.md`: all v1 decisions agreed with the owner.
-- `spec.md`: modules, contracts, error policy, 18 test cases.
+- `decisions.md`, `spec.md`: v1 design. The 7 spec choices beyond decisions.md were taken as written
+  (owner said "continue development").
+- Tickets 01-09 in `issues/` are all implemented.
+- `src/`: config, definition, discovery, resolve, runner, agent-tool, index, built-in Explore/Plan/general-purpose.
+- `test/`: all 18 spec cases (+5 extra) pass against `test/fake-pi.mjs`; `tsc` clean.
+- Real-model smoke test with pi 1.5.0 + haiku on the owner's machine: two parallel Explore runs from a codemode
+  script (~5 s, ~$0.0008 each), and a real `resume` of one of them in a resumed parent session.
 
-## Waiting on the owner
+## [verify] results
 
-1. Confirm the 7 spec choices made beyond decisions.md:
-   system prompt replaces pi's default (+ skills + env block); child sessions stored under
-   `<parent session dir>/subagents/<parent id>/` via `--session-id <agentId>`; child trust mirrors parent
-   (`--approve`/`--no-approve`); child failure returns `status: "failed"` (not a throw); built-in agent
-   prompts written by us; `run_in_background`/`isolation`/`name` accepted but ignored with a warning;
-   result shape `{ status, agentId, agentType, output, model, usage, turns, durationMs, warnings, error? }`.
-2. Rename the GitHub repo `pi-mp-all-in-one` -> `pi-pipipi` (owner does this in GitHub settings).
+- `pi.getSettings()` keeps the unknown `pipipi` key: yes, so config lives in settings.json.
+- Extensions cannot read pi's loaded skill list (no API on ctx or pi): skills are found by scanning the dirs in spec 5.3.
+- Long prompts: macOS takes 900 KB in one argv string, Linux caps one string at 128 KiB. Prompts over 100 KB go
+  through `@<tmpfile>`.
+- `--session-dir <dir> --session-id <id>` writes `<dir>/<timestamp>_<id>.jsonl` directly (no per-cwd subfolder).
 
-## Next steps
+## Open
 
-1. Split spec.md into tickets: `.scratch/pi-pipipi/issues/NN-slug.md`, tracer-bullet vertical slices,
-   blockers always have lower numbers. Get owner approval before coding.
-2. Implement tickets in order. Write `AGENTS.md` first (code style rules from the brief: simplest working
-   code, fail fast, validate only at boundaries, no defensive guards, no extra retries).
-
-## Open [verify] items (resolve in the ticket that needs them)
-
-- `pi.getSettings()` keeps the unknown `pipipi` key; else read `.pi/pipipi.json`.
-- Whether an extension can read pi's loaded skill list; else scan the skill dirs in spec 5.3.
-- Long prompts as a CLI argument; else pass `@file`.
-
-## Reference material
-
-pi docs and types are not in the repo. Install them in a scratch dir:
-`npm i @earendil-works/pi-coding-agent@1.5.0 --ignore-scripts`, then read `node_modules/@earendil-works/pi-coding-agent/docs/`
-(extensions.md, codemode.md, cli.md, json.md, packages.md, skills.md) and `examples/extensions/subagent/` (prior art: subprocess subagent).
-Claude Code subagent format: https://code.claude.com/docs/en/sub-agents and https://code.claude.com/docs/en/agent-sdk/subagents.
-
-The environment has no `pi` binary and no model API keys: tests use `test/fake-pi.mjs`; real-model smoke tests run locally by the owner.
+- Owner review of PR, then merge to `main`.
+- v2 candidates: tier B fields (mcpServers, worktree isolation, autoCompactWindow), background runs, nesting > 1.

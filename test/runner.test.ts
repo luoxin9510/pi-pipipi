@@ -1,0 +1,95 @@
+// Runner behaviour, exercised through the Agent tool with fake pi.
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import { test } from "node:test";
+import { agentFile, ev, happyLines, loadTool, sandbox, usage } from "./helpers.ts";
+
+test("10: completed run: output is the last assistant text, usage summed, turns counted", async () => {
+  const s = sandbox();
+  s.scenario({
+    lines: [
+      ev.session(),
+      ev.user("go"),
+      ev.assistant("looking", usage(100, 10, 0.5)),
+      ev.tool("grep"),
+      ev.turnEnd(),
+      ev.assistant("", usage(50, 5, 0.25)), // tool-only message keeps the earlier text
+      ev.tool("read"),
+      ev.turnEnd(),
+      ev.assistant("final answer", usage(10, 20, 0.25)),
+      ev.turnEnd(),
+      ev.settled(),
+    ],
+  });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({})).structuredContent;
+  assert.equal(r.status, "completed");
+  assert.equal(r.output, "final answer");
+  assert.equal(r.turns, 3);
+  assert.equal(r.usage.input, 160);
+  assert.equal(r.usage.output, 35);
+  assert.equal(r.usage.cost.total, 1);
+  assert.deepEqual(t.updates, ["test task: turn 1, grep", "test task: turn 2, read", "test task: turn 3, read"]);
+});
+
+test("11: maxTurns stops the child and returns partial", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".pi/agents/short.md"), agentFile("name: short\ndescription: d\nmaxTurns: 2"));
+  const turn = (n: number) => [ev.assistant(`turn ${n}`), ev.turnEnd()];
+  s.scenario({ lines: [ev.session(), ...turn(1), ...turn(2), ...turn(3), ...turn(4)], delayMs: 50, hang: true });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({ subagent_type: "short" })).structuredContent;
+  assert.equal(r.status, "partial");
+  assert.equal(r.turns, 2);
+  assert.equal(r.output, "turn 2");
+});
+
+test("12: provider error, non-zero exit, garbage line, missing session header -> failed with error", async () => {
+  const s = sandbox();
+  const t = await loadTool({}, { cwd: s.repo });
+  const cases: [Parameters<typeof s.scenario>[0], RegExp][] = [
+    [{ lines: [ev.session(), ev.assistant("", usage(1, 0, 0), { stopReason: "error", errorMessage: "529 overloaded" }), ev.turnEnd(), ev.settled()] }, /^529 overloaded$/],
+    [{ lines: [ev.session()], exitCode: 2, stderr: "line a\nboom: no API key\n" }, /boom: no API key/],
+    [{ lines: [ev.session()], exitCode: 3 }, /pi exited with code 3/],
+    [{ lines: [ev.session(), "not json at all", ...happyLines().slice(1)] }, /invalid JSON from pi: not json at all/],
+    [{ lines: [ev.assistant("hi"), ev.settled()] }, /did not start with a session header/],
+    [{ lines: [ev.session(), ev.assistant("hi")] }, /exited before the run settled/],
+  ];
+  for (const [scenario, error] of cases) {
+    s.scenario(scenario);
+    const res = await t.run({});
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.status, "failed");
+    assert.match(res.structuredContent.error, error);
+  }
+});
+
+test("12b: a missing pi binary fails the run", async () => {
+  const s = sandbox();
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool({ piCommand: join(s.root, "no-such-pi") }, { cwd: s.repo });
+  const r = (await t.run({})).structuredContent;
+  assert.equal(r.status, "failed");
+  assert.match(r.error, /could not start/);
+});
+
+test("13: U+2028 inside a JSON string does not split a record", async () => {
+  const s = sandbox();
+  const text = "line one line two end";
+  s.scenario({ lines: [ev.session(), ev.assistant(text), ev.turnEnd(), ev.settled()] });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({})).structuredContent;
+  assert.equal(r.status, "completed");
+  assert.equal(r.output, text);
+});
+
+test("14: abort kills the child and throws", async () => {
+  const s = sandbox();
+  s.scenario({ lines: [ev.session(), ev.assistant("working"), ev.turnEnd()], hang: true });
+  const t = await loadTool({}, { cwd: s.repo });
+  const ac = new AbortController();
+  const started = Date.now();
+  setTimeout(() => ac.abort(), 300);
+  await assert.rejects(t.run({}, ac.signal), /aborted/);
+  assert.ok(Date.now() - started < 3000, "the child was stopped promptly");
+});
