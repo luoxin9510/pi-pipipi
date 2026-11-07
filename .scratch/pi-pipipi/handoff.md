@@ -24,7 +24,7 @@ Status as of 2026-11-07. Branch: `pipipi-v1` (built on `claude/exciting-tesla-w5
 ## Flow (Matt Pocock skills)
 
 setup (local markdown tracker) -> grill -> to-spec (spec.md rewritten) -> to-tickets (01-09) -> implement (tests
-moved to one seam, mutation-checked) -> code-review x2 (fixed) -> pr (PR #1 ready for review).
+moved to one seam, mutation-checked) -> code-review x2 (fixed) -> pr (PR #1 ready for review) -> 3 rounds of Opus adversarial review (all confirmed findings fixed test-first; 62 tests).
 
 ## Open
 
