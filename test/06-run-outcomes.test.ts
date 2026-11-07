@@ -162,14 +162,45 @@ test("auto-retry: the outcome of the LAST assistant message decides, an earlier 
   assert.equal(r.error, undefined);
 });
 
-test("a prompt starting with @ reaches the child as text through the prompt file", async () => {
+test("a prompt starting with @ is prefixed with a newline so pi reads it as text", async () => {
   const s = sandbox();
   s.scenario({ lines: happyLines() });
   const t = await loadTool({}, { cwd: s.repo });
-  await t.run({ prompt: "@notes.txt summarize this" });
+  await t.run({ prompt: "@alice summarize this" });
   const rec = s.record();
-  assert.match(rec.argv.at(-1)!, /^@.*prompt\.md$/);
-  assert.equal(rec.promptFile, "@notes.txt summarize this");
+  assert.equal(rec.argv.at(-1), "\n@alice summarize this");
+  assert.equal(rec.promptFile, undefined);
+});
+
+const failedTurn = [
+  ev.assistant("", usage(1, 0, 0), { stopReason: "error", errorMessage: "529 overloaded" }),
+  ev.turnEnd({ role: "assistant", stopReason: "error" }),
+  JSON.stringify({ type: "agent_end", messages: [], willRetry: true }),
+  JSON.stringify({ type: "auto_retry_start", attempt: 1 }),
+  ev.assistant("recovered"),
+  ev.turnEnd({ role: "assistant", stopReason: "stop" }),
+  JSON.stringify({ type: "auto_retry_end", success: true }),
+  ev.settled(),
+];
+
+test("a turn that ended in a provider error does not count toward maxTurns", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".pi/agents/one.md"), agentFile("name: one\ndescription: d\nmaxTurns: 1"));
+  s.scenario({ lines: [ev.session(), ...failedTurn] });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({ subagent_type: "one" })).structuredContent;
+  assert.equal(r.status, "completed");
+  assert.equal(r.output, "recovered");
+  assert.equal(r.turns, 1);
+});
+
+test("a turn that ended in a provider error is not counted in turns", async () => {
+  const s = sandbox();
+  s.scenario({ lines: [ev.session(), ...failedTurn] });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({})).structuredContent;
+  assert.equal(r.status, "completed");
+  assert.equal(r.turns, 1);
 });
 
 test("a child that settles but never exits is stopped after a grace period and the run completes", async () => {

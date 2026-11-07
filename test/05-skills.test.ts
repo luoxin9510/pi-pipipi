@@ -67,3 +67,18 @@ test("an unreadable skills directory counts as empty: the skill is reported not 
     chmodSync(join(s.repo, ".pi/skills/locked"), 0o755);
   }
 });
+
+test("a looping or dangling symlink in a skills directory does not break the call", async () => {
+  const s = sandbox();
+  const skills = join(s.repo, ".pi/skills");
+  s.write(join(skills, "good/SKILL.md"), skill("good", "Fine."));
+  symlinkSync("loop", join(skills, "loop"));
+  symlinkSync(join(s.root, "nowhere"), join(skills, "dangling"));
+  s.write(join(s.repo, ".pi/agents/x.md"), agentFile("name: x\ndescription: d\nskills: good, ghost"));
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({ subagent_type: "x" })).structuredContent;
+  assert.equal(r.status, "completed");
+  assert.match(s.record().systemPrompt!, /Fine\./);
+  assert.deepEqual(r.warnings, ['skill "ghost" not found']);
+});

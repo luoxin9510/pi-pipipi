@@ -208,3 +208,49 @@ test("a project agent overriding a built-in warns; a user-dir override does not"
   assert.ok(notes.includes(`pi-pipipi: project agent "Explore" overrides the built-in (${path})`), notes.join("\n"));
   assert.equal(notes.filter((n) => /overrides the built-in/.test(n)).length, 1);
 });
+
+test("a self-referencing symlink in an agents folder warns and the other agents still load", async () => {
+  const s = sandbox();
+  const agents = join(s.repo, ".claude/agents");
+  s.write(join(agents, "ok.md"), def("ok", "fine"));
+  symlinkSync("loop", join(agents, "loop"));
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool({}, { cwd: s.repo });
+  assert.ok(t.registered);
+  assert.match(t.tool.description, /- ok: fine/);
+  assert.ok(t.notes.some((n) => n.includes("loop")), `no warning naming the loop: ${t.notes}`);
+});
+
+test("agent scan skips dot directories and node_modules, and goes at most 6 levels deep", async () => {
+  const s = sandbox();
+  const agents = join(s.repo, ".claude/agents");
+  s.write(join(agents, "a/b/c/d/e/f/six.md"), def("six", "level 6"));
+  s.write(join(agents, "a/b/c/d/e/f/g/seven.md"), def("seven", "level 7"));
+  s.write(join(agents, ".hidden/h.md"), def("h", "hidden"));
+  s.write(join(agents, "node_modules/n.md"), def("n", "modules"));
+  const t = await loadTool({}, { cwd: s.repo });
+  assert.match(t.tool.description, /- six: level 6/);
+  assert.doesNotMatch(t.tool.description, /- seven:/);
+  assert.doesNotMatch(t.tool.description, /- h:/);
+  assert.doesNotMatch(t.tool.description, /- n:/);
+});
+
+test("a source with more than 5000 entries stops with a warning", async () => {
+  const s = sandbox();
+  const agents = join(s.repo, ".claude/agents");
+  s.write(join(agents, "ok.md"), def("ok", "fine"));
+  for (let i = 0; i < 5001; i++) mkdirSync(join(agents, `d${i}`));
+  const t = await loadTool({}, { cwd: s.repo });
+  assert.ok(t.notes.some((n) => n.includes("more than 5000 entries")), `no cap warning: ${t.notes}`);
+});
+
+test("the project walk never includes the home directory", async () => {
+  const s = sandbox();
+  s.write(join(s.home, ".claude/agents/Explore.md"), def("Explore", "user explore"));
+  s.write(join(s.home, ".claude/agents/c.md"), def("c", "home-claude"));
+  s.write(join(s.home, ".pi/agent/agents/c.md"), def("c", "home-pi"));
+  const t = await loadTool({}, { cwd: s.home });
+  assert.match(t.tool.description, /- Explore: user explore/);
+  assert.match(t.tool.description, /- c: home-pi/);
+  assert.equal(t.notes.some((n) => n.includes("overrides the built-in")), false, `${t.notes}`);
+});

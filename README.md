@@ -32,6 +32,9 @@ Existing Claude Code agent files work unchanged. Sources, highest priority first
 4. `~/.claude/agents/`
 5. Built-in: `Explore`, `Plan`, `general-purpose`
 
+The project walk never includes your home directory (`~/.pi/agent/agents` and `~/.claude/agents` are user sources only).
+Scans skip dot directories and `node_modules`, go at most 6 levels deep and read at most 5000 entries per source.
+
 Definitions are re-read on every call, so edits apply at once. The agent list in the tool's description is built at
 session start: a new agent can be called right away but shows up in the description only after `/reload`.
 Invalid files are skipped with a warning.

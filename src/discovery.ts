@@ -13,35 +13,61 @@ export interface Discovery {
   warnings: string[];
 }
 
-// cwd, then each parent up to the nearest ancestor containing .git. Without a repo, only cwd.
+// cwd, then each parent up to the nearest ancestor containing .git. Never includes the home directory (its
+// .pi/.claude folders are user sources). Without a repo, only cwd.
 export function projectDirs(cwd: string): string[] {
+  const home = homedir();
   const dirs: string[] = [];
-  for (let dir = cwd; ; dir = dirname(dir)) {
+  for (let dir = cwd; dir !== home; dir = dirname(dir)) {
     dirs.push(dir);
     if (existsSync(join(dir, ".git"))) return dirs;
-    if (dirname(dir) === dir) return [cwd];
+    if (dirname(dir) === dir) break;
   }
+  return cwd === home ? [] : [cwd];
 }
 
-// Symlinked directories are followed (like skills); realpath keeps a loop from repeating.
-function markdownFiles(dir: string, warnings: string[], seen = new Set<string>()): string[] {
-  if (!existsSync(dir)) return [];
-  const real = realpathSync(dir);
-  if (seen.has(real)) return [];
-  seen.add(real);
-  let entries: string[];
-  try {
-    entries = readdirSync(dir).sort();
-  } catch (err) {
-    warnings.push(`cannot read agent directory ${dir}: ${(err as NodeJS.ErrnoException).code}`);
-    return [];
-  }
-  return entries.flatMap((e) => {
-    const path = join(dir, e);
-    const stat = statSync(path, { throwIfNoEntry: false }); // a dangling symlink is skipped
-    if (stat?.isDirectory()) return markdownFiles(path, warnings, seen);
-    return stat?.isFile() && e.endsWith(".md") ? [path] : [];
-  });
+export const MAX_SCAN_DEPTH = 6; // levels below a source root
+export const MAX_SCAN_ENTRIES = 5000; // per source root
+
+// Symlinked directories are followed (like skills); realpath keeps a loop from repeating. Dot directories and
+// node_modules are not entered. An entry that cannot be read is skipped with a warning.
+function markdownFiles(root: string, warnings: string[]): string[] {
+  if (!existsSync(root)) return [];
+  const files: string[] = [];
+  const seen = new Set<string>();
+  let count = 0;
+  const walk = (dir: string, depth: number): boolean => {
+    let entries: string[];
+    try {
+      const real = realpathSync(dir);
+      if (seen.has(real)) return true;
+      seen.add(real);
+      entries = readdirSync(dir).sort();
+    } catch (err) {
+      warnings.push(`cannot read agent directory ${dir}: ${(err as NodeJS.ErrnoException).code}`);
+      return true;
+    }
+    for (const e of entries) {
+      if (++count > MAX_SCAN_ENTRIES) {
+        warnings.push(`stopped scanning ${root}: more than ${MAX_SCAN_ENTRIES} entries`);
+        return false;
+      }
+      const path = join(dir, e);
+      let stat;
+      try {
+        stat = statSync(path, { throwIfNoEntry: false }); // a dangling symlink is skipped
+      } catch (err) {
+        warnings.push(`cannot read ${path}: ${(err as NodeJS.ErrnoException).code}`);
+        continue;
+      }
+      if (stat?.isDirectory()) {
+        if (depth < MAX_SCAN_DEPTH && !e.startsWith(".") && e !== "node_modules" && !walk(path, depth + 1)) return false;
+      } else if (stat?.isFile() && e.endsWith(".md")) files.push(path);
+    }
+    return true;
+  };
+  walk(root, 0);
+  return files;
 }
 
 export function agentSources(cwd: string): string[] {

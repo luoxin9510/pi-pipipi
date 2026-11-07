@@ -80,9 +80,9 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
   const tmp = mkdtempSync(join(tmpdir(), "pipipi-"));
   const systemPromptFile = join(tmp, "system-prompt.md");
   writeFileSync(systemPromptFile, spec.systemPrompt);
-  let promptArg = spec.prompt;
-  // pi reads an argument starting with "@" as a file, even after `--`, so such prompts go through a file too.
-  if (Buffer.byteLength(spec.prompt) > MAX_PROMPT_ARG || spec.prompt.startsWith("@")) {
+  // pi reads an argument starting with "@" as a file, even after `--`: a newline in front makes it text.
+  let promptArg = spec.prompt.startsWith("@") ? `\n${spec.prompt}` : spec.prompt;
+  if (Buffer.byteLength(spec.prompt) > MAX_PROMPT_ARG) {
     const promptFile = join(tmp, "prompt.md");
     writeFileSync(promptFile, spec.prompt);
     promptArg = `@${promptFile}`;
@@ -108,6 +108,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
     let records = 0;
     let settled = false;
     let assistantError: string | undefined;
+    let turnStop: string | undefined; // stopReason of the assistant message in the turn in progress
     let streamError: string | undefined; // bad stream: we stopped the child
     let hitMaxTurns = false;
     let parentAborted = false; // our caller aborted
@@ -160,6 +161,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
             const text = m.content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
             if (text.trim() !== "") output = text;
             // pi retries a failed turn: the last assistant message decides.
+            turnStop = m.stopReason;
             assistantError = m.stopReason === "error" ? (m.errorMessage ?? "provider error") : undefined;
             break;
           }
@@ -167,7 +169,11 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
             lastTool = event.toolName as string;
             onProgress({ turns: turns + 1, lastTool }); // the turn in progress
             break;
-          case "turn_end":
+          case "turn_end": {
+            // A turn that failed with a provider error is retried by pi: it does not count.
+            const stop = (event.message as { stopReason?: string } | undefined)?.stopReason ?? turnStop;
+            turnStop = undefined;
+            if (stop === "error") break;
             turns++;
             onProgress({ turns, lastTool });
             if (spec.maxTurns !== undefined && turns >= spec.maxTurns) {
@@ -176,6 +182,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
               graceTimer = setTimeout(stopChild, SETTLE_GRACE_MS);
             }
             break;
+          }
           case "agent_settled":
             settled = true;
             if (event.aborted === true) childAborted = true;

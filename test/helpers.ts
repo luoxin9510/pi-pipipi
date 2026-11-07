@@ -20,7 +20,7 @@ export const ev = {
     }),
   user: (text: string) => JSON.stringify({ type: "message_end", message: { role: "user", content: text } }),
   tool: (name: string) => JSON.stringify({ type: "tool_execution_start", toolCallId: "c", toolName: name, args: {} }),
-  turnEnd: () => JSON.stringify({ type: "turn_end", message: {}, toolResults: [] }),
+  turnEnd: (message: Record<string, unknown> = {}) => JSON.stringify({ type: "turn_end", message, toolResults: [] }),
   settled: () => JSON.stringify({ type: "agent_settled", aborted: false }),
 };
 
