@@ -1,19 +1,18 @@
 // The `Agent` tool (spec 7): discovery -> resolve -> concurrency slot -> run.
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type JsonValue, StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { Config } from "./config.ts";
-import { EFFORTS } from "./definition.ts";
+import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
-import { agentMetaFile, type CallInput, type ParentContext, resolveChild, storedAgentType } from "./resolve.ts";
-import { runChild, type RunResult } from "./runner.ts";
+import { type CallInput, type ParentContext, resolveChild } from "./resolve.ts";
+import { storedAgentType, writeAgentMeta } from "./sessions.ts";
+import { runChild, type RunResult, type Status, usageSchema } from "./runner.ts";
 
-export const DEFAULT_AGENT = "general-purpose";
+const DEFAULT_AGENT = "general-purpose";
 
-export const parameters = Type.Object({
+const parameters = Type.Object({
   description: Type.String({ description: "Short (3-5 word) label for the task, shown in progress" }),
   prompt: Type.String({ description: "The full task for the agent. It sees nothing else from this session." }),
   subagent_type: Type.Optional(Type.String({ description: `Agent to run. Default "${DEFAULT_AGENT}".` })),
@@ -26,23 +25,10 @@ export const parameters = Type.Object({
 });
 export type AgentInput = Static<typeof parameters>;
 
-const usageSchema = Type.Object({
-  input: Type.Number(),
-  output: Type.Number(),
-  cacheRead: Type.Number(),
-  cacheWrite: Type.Number(),
-  totalTokens: Type.Number(),
-  cost: Type.Object({
-    input: Type.Number(),
-    output: Type.Number(),
-    cacheRead: Type.Number(),
-    cacheWrite: Type.Number(),
-    total: Type.Number(),
-  }),
-});
+const STATUSES = ["completed", "partial", "failed"] as const satisfies readonly Status[];
 
 export const outputSchema = Type.Object({
-  status: StringEnum(["completed", "partial", "failed"] as const),
+  status: StringEnum(STATUSES),
   agentId: Type.String({ description: "Pass as `resume` to continue this agent" }),
   agentType: Type.String(),
   output: Type.String({ description: "Text of the agent's last message" }),
@@ -53,7 +39,7 @@ export const outputSchema = Type.Object({
   warnings: Type.Array(Type.String()),
   error: Type.Optional(Type.String()),
 });
-export type AgentResult = Omit<Static<typeof outputSchema>, "status"> & { status: RunResult["status"] };
+export type AgentResult = Omit<Static<typeof outputSchema>, "status"> & { status: Status };
 
 // Process-wide: every session in this pi process shares the limit.
 class Semaphore {
@@ -103,7 +89,7 @@ export function describeAgents({ agents }: Discovery): string {
   ].join("\n");
 }
 
-export function parentContext(ctx: ExtensionContext): ParentContext {
+function parentContext(ctx: ExtensionContext): ParentContext {
   return {
     model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
     thinking: ctx.thinkingLevel ?? "off",
@@ -121,7 +107,7 @@ function summary(r: AgentResult): string {
   return [...lines, "", r.output].join("\n");
 }
 
-export async function executeAgent(
+async function executeAgent(
   input: AgentInput,
   signal: AbortSignal | undefined,
   onUpdate: ((text: string) => void) | undefined,
@@ -145,17 +131,13 @@ export async function executeAgent(
   for (const field of ["run_in_background", "isolation", "name"] as const) {
     if (input[field] !== undefined) spec.warnings.push(`"${field}" is not supported and was ignored`);
   }
-  for (const field of def.inert) spec.warnings.push(`field "${field}" has no effect in pi-pipipi`);
-  if (parent.sessionFile && input.resume === undefined) {
-    const meta = agentMetaFile(parent, spec.agentId);
-    mkdirSync(dirname(meta), { recursive: true });
-    writeFileSync(meta, JSON.stringify({ agentType }));
-  }
+  for (const field of def.inert) spec.warnings.push(inertNotice(field));
 
   slots.limit = config.maxConcurrent;
   await slots.acquire(signal);
   let run: RunResult;
   try {
+    if (parent.sessionFile && input.resume === undefined) writeAgentMeta(parent, spec.agentId, agentType);
     run = await runChild(spec, signal, (p) => onUpdate?.(`${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`));
   } finally {
     slots.release();

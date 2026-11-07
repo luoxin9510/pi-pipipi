@@ -47,3 +47,11 @@ test("wrong config types throw naming the key", async () => {
   ];
   for (const [settings, error] of cases) await assert.rejects(loadTool(settings, { cwd: s.repo }), error);
 });
+
+test("a config error is shown in the UI and rethrown", async () => {
+  const s = sandbox();
+  const notes: string[] = [];
+  await assert.rejects(loadTool({ maxConcurrent: 0 }, { cwd: s.repo, notes }), /pipipi\.maxConcurrent/);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0]!, /^pi-pipipi: .*pipipi\.maxConcurrent must be a positive integer/);
+});

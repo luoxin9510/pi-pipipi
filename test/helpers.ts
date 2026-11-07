@@ -75,13 +75,14 @@ interface FakeCtx {
   trusted?: boolean;
   sessionFile?: string;
   sessionId?: string;
+  notes?: string[]; // collects ui notifications even when loading throws
 }
 
 // Load the extension against a fake ExtensionAPI and return the registered Agent tool.
 export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
   const tools: Record<string, any> = {};
   const handlers: Record<string, Function[]> = {};
-  const notes: string[] = [];
+  const notes: string[] = c.notes ?? [];
   const pi = {
     on: (event: string, h: Function) => (handlers[event] ??= []).push(h),
     registerTool: (t: any) => (tools[t.name] = t),

@@ -1,6 +1,6 @@
 // Ticket 05: preload skills.
 import assert from "node:assert/strict";
-import { mkdirSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { agentFile, happyLines, loadTool, sandbox } from "./helpers.ts";
@@ -50,4 +50,20 @@ test("the system prompt replaces pi's default", async () => {
   const argv = s.record().argv;
   assert.ok(argv.includes("--system-prompt"));
   assert.equal(argv.includes("--append-system-prompt"), false);
+});
+
+test("an unreadable skills directory counts as empty: the skill is reported not found", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".pi/skills/locked/SKILL.md"), skill("hidden", "Secret."));
+  s.write(join(s.repo, ".pi/agents/x.md"), agentFile("name: x\ndescription: d\nskills: hidden"));
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool({}, { cwd: s.repo });
+  chmodSync(join(s.repo, ".pi/skills/locked"), 0o000);
+  try {
+    const r = (await t.run({ subagent_type: "x" })).structuredContent;
+    assert.deepEqual(r.warnings, ['skill "hidden" not found']);
+    assert.equal(r.status, "completed");
+  } finally {
+    chmodSync(join(s.repo, ".pi/skills/locked"), 0o755);
+  }
 });

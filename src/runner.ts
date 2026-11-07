@@ -4,19 +4,29 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Static, Type } from "typebox";
 import type { ChildSpec } from "./resolve.ts";
 
-export interface Usage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-}
+export const usageSchema = Type.Object({
+  input: Type.Number(),
+  output: Type.Number(),
+  cacheRead: Type.Number(),
+  cacheWrite: Type.Number(),
+  totalTokens: Type.Number(),
+  cost: Type.Object({
+    input: Type.Number(),
+    output: Type.Number(),
+    cacheRead: Type.Number(),
+    cacheWrite: Type.Number(),
+    total: Type.Number(),
+  }),
+});
+export type Usage = Static<typeof usageSchema>;
+
+export type Status = "completed" | "partial" | "failed";
 
 export interface RunResult {
-  status: "completed" | "partial" | "failed";
+  status: Status;
   output: string;
   usage: Usage;
   turns: number;
@@ -34,7 +44,7 @@ const MAX_PROMPT_ARG = 100_000;
 const KILL_GRACE_MS = 5000;
 const STDERR_LINES = 30;
 
-export function emptyUsage(): Usage {
+function emptyUsage(): Usage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 }
 
@@ -88,11 +98,12 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
     let streamError: string | undefined; // bad stream: we stopped the child
     let hitMaxTurns = false;
     let aborted = false;
+    let agentAborted = false; // the child reported agent_settled with aborted: true
     let stderr = "";
     let pending = Buffer.alloc(0);
     let killTimer: NodeJS.Timeout | undefined;
 
-    const stop = () => {
+    const stopChild = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
       child.kill("SIGTERM");
       killTimer ??= setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
@@ -101,22 +112,22 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
 
     const onAbort = () => {
       aborted = true;
-      stop();
+      stopChild();
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    const handle = (line: string) => {
+    const handleEvent = (line: string) => {
       let event: { type: string; [k: string]: unknown };
       try {
         event = JSON.parse(line);
       } catch {
         streamError = `invalid JSON from pi: ${line.slice(0, 200)}`;
-        return stop();
+        return stopChild();
       }
       records++;
       if (records === 1 && event.type !== "session") {
         streamError = `pi stream did not start with a session header: ${line.slice(0, 200)}`;
-        return stop();
+        return stopChild();
       }
       switch (event.type) {
         case "message_end": {
@@ -131,17 +142,19 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
         }
         case "tool_execution_start":
           lastTool = event.toolName as string;
+          onProgress({ turns: turns + 1, lastTool }); // the turn in progress
           break;
         case "turn_end":
           turns++;
           onProgress({ turns, lastTool });
           if (spec.maxTurns !== undefined && turns >= spec.maxTurns && !hitMaxTurns) {
             hitMaxTurns = true;
-            stop();
+            stopChild();
           }
           break;
         case "agent_settled":
           settled = true;
+          if (event.aborted === true) agentAborted = true;
           break;
       }
     };
@@ -153,7 +166,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
       for (let nl = pending.indexOf(0x0a); nl !== -1; nl = pending.indexOf(0x0a)) {
         const line = pending.subarray(0, nl).toString("utf8").replace(/\r$/, "");
         pending = pending.subarray(nl + 1);
-        if (line.trim() !== "") handle(line);
+        if (line.trim() !== "") handleEvent(line);
         if (streamError || hitMaxTurns) return;
       }
     });
@@ -178,6 +191,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
         spawnError?.message ??
         streamError ??
         assistantError ??
+        (agentAborted ? "child run was aborted" : undefined) ??
         (code !== 0 ? stderrTail || `pi exited with code ${code}` : undefined) ??
         (!settled ? stderrTail || "pi exited before the run settled" : undefined);
       resolve(error === undefined ? { status: "completed", ...base } : { status: "failed", ...base, error });

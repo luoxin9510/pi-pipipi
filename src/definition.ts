@@ -28,6 +28,8 @@ const INERT_FIELDS = [
   "permissionMode", "hooks", "memory", "background", "initialPrompt", "experimental",
 ];
 
+export const inertNotice = (field: string) => `field "${field}" has no effect in pi-pipipi`;
+
 class Skip extends Error {}
 
 // Claude Code accepts a comma-separated string or a YAML list.

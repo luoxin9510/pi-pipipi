@@ -1,9 +1,9 @@
 // Ticket 07: child sessions and resume.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { flag, happyLines, loadTool, sandbox } from "./helpers.ts";
+import { ev, flag, happyLines, loadTool, sandbox } from "./helpers.ts";
 
 test("first run stores the session under subagents/<parent id>/ and records the agent type", async () => {
   const s = sandbox();
@@ -51,4 +51,17 @@ test("in-memory parent: children are in memory and cannot be resumed", async () 
   assert.ok(argv.includes("--no-session"));
   assert.equal(argv.includes("--session-dir"), false);
   await assert.rejects(t.run({ resume: r.agentId }), /resume needs a persisted parent session/);
+});
+
+test("an aborted queued call leaves no meta file behind", async () => {
+  const s = sandbox();
+  const t = await loadTool({ maxConcurrent: 1 }, { cwd: s.repo, sessionFile: join(s.root, "sessions", "p.jsonl"), sessionId: "p" });
+  s.scenario({ lines: [ev.session(), ev.assistant("ok"), ev.turnEnd(), ev.settled()], delayMs: 100 });
+  const ac = new AbortController();
+  const first = t.run({});
+  const queued = t.run({}, ac.signal);
+  ac.abort();
+  await assert.rejects(queued, /aborted/);
+  const { agentId } = (await first).structuredContent;
+  assert.deepEqual(readdirSync(join(s.root, "sessions", "subagents", "p")), [`${agentId}.json`]);
 });

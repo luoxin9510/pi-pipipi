@@ -29,7 +29,7 @@ test("10: completed run: output is the last assistant text, usage summed, turns 
   assert.equal(r.usage.input, 160);
   assert.equal(r.usage.output, 35);
   assert.equal(r.usage.cost.total, 1);
-  assert.deepEqual(t.updates, ["test task: turn 1, grep", "test task: turn 2, read", "test task: turn 3, read"]);
+  assert.deepEqual(t.updates, ["test task: turn 1, grep", "test task: turn 1, grep", "test task: turn 2, read", "test task: turn 2, read", "test task: turn 3, read"]);
 });
 
 test("11: maxTurns stops the child and returns partial", async () => {
@@ -62,6 +62,15 @@ test("12: provider error, non-zero exit, garbage line, missing session header ->
     assert.equal(res.structuredContent.status, "failed");
     assert.match(res.structuredContent.error, error);
   }
+});
+
+test("12a: agent_settled with aborted: true -> failed with a clear error", async () => {
+  const s = sandbox();
+  s.scenario({ lines: [ev.session(), ev.assistant("hi"), ev.turnEnd(), JSON.stringify({ type: "agent_settled", aborted: true })] });
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = (await t.run({})).structuredContent;
+  assert.equal(r.status, "failed");
+  assert.equal(r.error, "child run was aborted");
 });
 
 test("12b: a missing pi binary fails the run", async () => {

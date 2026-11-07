@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AgentDefinition, parseDefinition } from "./definition.ts";
+import { type AgentDefinition, inertNotice, parseDefinition } from "./definition.ts";
 
 export const BUILTIN_DIR = fileURLToPath(new URL("./builtin/", import.meta.url));
 
@@ -63,7 +63,7 @@ export function discoverAgents(cwd: string): Discovery {
       seen.set(def.name, path);
       if (agents.has(def.name)) continue; // a higher-priority source already defined it
       agents.set(def.name, dir === BUILTIN_DIR ? { ...def, source: `builtin:${def.name}` } : def);
-      for (const field of def.inert) warnings.push(`${def.name}: field "${field}" has no effect in pi-pipipi`);
+      for (const field of def.inert) warnings.push(`${def.name}: ${inertNotice(field)}`);
     }
   }
   return { agents, warnings };

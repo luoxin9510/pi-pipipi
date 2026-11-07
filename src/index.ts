@@ -12,7 +12,12 @@ export default function pipipi(pi: ExtensionAPI) {
   let config: Config | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
-    config = readConfig((pi.getSettings() as { pipipi?: unknown }).pipipi);
+    try {
+      config = readConfig((pi.getSettings() as { pipipi?: unknown }).pipipi);
+    } catch (err) {
+      if (ctx.hasUI) ctx.ui.notify(`pi-pipipi: ${(err as Error).message}`, "error");
+      throw err;
+    }
     const discovery = discoverAgents(ctx.cwd);
     pi.registerTool(agentTool(() => config!, describeAgents(discovery)));
     if (ctx.hasUI) {
