@@ -152,6 +152,44 @@ Reply with the returned JSON only.'
 Expect three `completed` results on `anthropic/claude-haiku-5-5`, the second one an `Explore` answering from its
 earlier turn.
 
+### Evals (real model, haiku throughout)
+
+```bash
+npm run eval                       # every case once
+npm run eval -- --runs 3           # repeat, for pass rates
+npm run eval -- --only resume      # cases whose name contains "resume"
+```
+
+`evals/cases.ts` holds 13 cases. Eleven call the tool in-process with real `pi` children (listing, read-only agents
+cannot write, custom agent tools, resume, `maxTurns`, skills, context files vs `omitClaudeMd`, model aliases, a bad
+model, no nesting, parallel runs). Two start a real parent `pi` on haiku with codemode and this checkout
+(`--no-extensions -e builtin:codemode -e ./src/index.ts`), one with a given script and one where the model decides to
+delegate. Cases are graded from the structured result and side effects. Results go to `evals/results/` (ignored by git).
+Last run (pi 1.5.0): 39/39 over 3 runs, $0.024 in all.
+
+### Stress test
+
+```bash
+npm run stress                     # haiku: 20 calls at once, then 40 (20 run, 20 queue)
+npm run stress -- --calls 20 --limit 20
+npm run stress -- --fake           # 200 calls against test/fake-pi.mjs: the extension's own overhead
+```
+
+Last run (Apple M5, 10 cores, 24 GB; pi 1.5.0; each call an Explore reading one file):
+
+| | 20 calls | 40 calls (limit 20) | 200 fake calls (limit 20, 550 ms each) |
+|---|---|---|---|
+| completed | 20/20 | 40/40 | 200/200 |
+| wall | 5.7 s | 9.7 s | 5.6 s (ideal 5.5 s) |
+| call latency p50 / p95 | 4.7 / 5.3 s | 6.4 / 9.4 s | 2.8 / 5.5 s |
+| queue + spawn p50 / p95 | 9 / 28 ms | 31 ms / 5.6 s | (queue) |
+| peak children | 20 | 20 | 20 |
+| peak RSS (all children) | 4.5 GB | 4.5 GB | 0.9 GB |
+| cost | $0.0085 | $0.0058 | — |
+
+Each child is a full `pi` that loads your installed extensions, about 220 MB each. With the default limit of 20,
+plan for about 4.5 GB of memory while a large fan-out runs. Lower `maxConcurrent` on smaller machines.
+
 Design notes and tickets: `.scratch/pi-pipipi/`.
 
 ## License

@@ -24,7 +24,8 @@ subprocesses. Design: `.scratch/pi-pipipi/decisions.md` and `spec.md`. Tickets: 
 
 - Test through the highest seam: the registered tool's `execute`, with fake pi.
 - Never run `npm test` (or any test command) from inside a test.
-- Real-model smoke tests are run by the owner (see README).
+- Real-model checks: `npm run eval` (`evals/`, haiku only) and `npm run stress` (`stress/`). They cost money: run
+  them on request, never from `npm test`.
 
 ## Agent skills
 
