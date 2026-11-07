@@ -21,7 +21,12 @@ Status as of 2026-11-07. Branch: `pipipi-v1` (built on `claude/exciting-tesla-w5
   through `@<tmpfile>`.
 - `--session-dir <dir> --session-id <id>` writes `<dir>/<timestamp>_<id>.jsonl` directly (no per-cwd subfolder).
 
+## Flow (Matt Pocock skills)
+
+setup (local markdown tracker) -> grill -> to-spec (spec.md rewritten) -> to-tickets (01-09) -> implement (tests
+moved to one seam, mutation-checked) -> code-review x2 (fixed) -> pr (PR #1 ready for review).
+
 ## Open
 
-- Owner review of draft PR #1, then merge to `main`.
+- Owner: review and merge PR #1; run the README smoke test and close ticket 09.
 - v2 candidates: tier B fields (mcpServers, worktree isolation, autoCompactWindow), background runs, nesting > 1.
