@@ -1,7 +1,7 @@
 // pi-pipipi extension entry: register the `Agent` tool for codemode scripts.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { agentTool, describeAgents } from "./agent-tool.ts";
+import { agentTool, describeAgents, limitConcurrency } from "./agent-tool.ts";
 import { type Config, readConfig } from "./config.ts";
 import { discoverAgents } from "./discovery.ts";
 
@@ -18,6 +18,7 @@ export default function pipipi(pi: ExtensionAPI) {
       if (ctx.hasUI) ctx.ui.notify(`pi-pipipi: ${(err as Error).message}`, "error");
       throw err;
     }
+    limitConcurrency(config.maxConcurrent);
     const discovery = discoverAgents(ctx.cwd);
     pi.registerTool(agentTool(() => config!, describeAgents(discovery)));
     if (ctx.hasUI) {

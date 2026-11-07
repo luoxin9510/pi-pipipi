@@ -55,13 +55,14 @@ test("in-memory parent: children are in memory and cannot be resumed", async () 
 
 test("an aborted queued call leaves no meta file behind", async () => {
   const s = sandbox();
-  const t = await loadTool({ maxConcurrent: 1 }, { cwd: s.repo, sessionFile: join(s.root, "sessions", "p.jsonl"), sessionId: "p" });
+  const t = await loadTool({}, { cwd: s.repo, sessionFile: join(s.root, "sessions", "p.jsonl"), sessionId: "p" });
   s.scenario({ lines: [ev.session(), ev.assistant("ok"), ev.turnEnd(), ev.settled()], delayMs: 100 });
   const ac = new AbortController();
-  const first = t.run({});
+  // The process-wide limit is the default 20 (the first session's config): fill it, then queue one more.
+  const running = Array.from({ length: 20 }, () => t.run({}));
   const queued = t.run({}, ac.signal);
   ac.abort();
   await assert.rejects(queued, /aborted/);
-  const { agentId } = (await first).structuredContent;
-  assert.deepEqual(readdirSync(join(s.root, "sessions", "subagents", "p")), [`${agentId}.json`]);
+  const ids = (await Promise.all(running)).map((r) => `${r.structuredContent.agentId}.json`).sort();
+  assert.deepEqual(readdirSync(join(s.root, "sessions", "subagents", "p")).sort(), ids);
 });

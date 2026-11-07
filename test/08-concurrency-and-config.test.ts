@@ -20,18 +20,29 @@ test("with maxConcurrent 2 the third call waits for a free slot", async () => {
 test("a queued call that is aborted leaves the queue", async () => {
   const s = sandbox();
   s.scenario(slowRun);
-  const t = await loadTool({ maxConcurrent: 1 }, { cwd: s.repo });
+  const t = await loadTool({ maxConcurrent: 2 }, { cwd: s.repo }); // the first session's limit stays in force
   const ac = new AbortController();
   const first = t.run({});
+  const second = t.run({});
   const queued = t.run({}, ac.signal);
   const third = t.run({});
   ac.abort();
   await assert.rejects(queued, /aborted/);
-  await first;
+  await Promise.all([first, second]);
   // If the aborted call kept its place in the queue, it would take the freed slot and never release it,
   // and the third call would wait forever.
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("third call never got a slot")), 3000));
   assert.equal((await Promise.race([third, timeout]) as any).structuredContent.status, "completed");
+});
+
+test("the first session's maxConcurrent wins for the process; a later session does not change it", async () => {
+  const s = sandbox();
+  s.scenario(slowRun);
+  const t = await loadTool({ maxConcurrent: 1 }, { cwd: s.repo }); // limit is already 2 from the first test
+  const ends: number[] = [];
+  const start = Date.now();
+  await Promise.all([1, 2].map(() => t.run({}).then(() => ends.push(Date.now() - start))));
+  assert.ok(Math.abs(ends[1]! - ends[0]!) < 300, `both calls run in parallel: ${ends.join(", ")}`);
 });
 
 test("wrong config types throw naming the key", async () => {

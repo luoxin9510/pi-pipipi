@@ -1,6 +1,7 @@
 // Run one child pi process and read its JSON event stream (spec 6).
 
-import { spawn } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
+import type { Readable } from "node:stream";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +44,8 @@ export interface Progress {
 // Linux caps one argv string at 128 KiB. Longer prompts go through a file.
 const MAX_PROMPT_ARG = 100_000;
 const KILL_GRACE_MS = 5000;
+// How long a child may take to exit after agent_settled, and to settle after its last allowed turn.
+const SETTLE_GRACE_MS = 2000;
 const STDERR_LINES = 30;
 
 function emptyUsage(): Usage {
@@ -78,7 +81,8 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
   const systemPromptFile = join(tmp, "system-prompt.md");
   writeFileSync(systemPromptFile, spec.systemPrompt);
   let promptArg = spec.prompt;
-  if (Buffer.byteLength(spec.prompt) > MAX_PROMPT_ARG) {
+  // pi reads an argument starting with "@" as a file, even after `--`, so such prompts go through a file too.
+  if (Buffer.byteLength(spec.prompt) > MAX_PROMPT_ARG || spec.prompt.startsWith("@")) {
     const promptFile = join(tmp, "prompt.md");
     writeFileSync(promptFile, spec.prompt);
     promptArg = `@${promptFile}`;
@@ -87,7 +91,15 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
   const argv = [...spec.args, "--system-prompt", systemPromptFile, "--", promptArg];
 
   return new Promise((resolve, reject) => {
-    const child = spawn(spec.command, argv, { cwd: spec.cwd, env: spec.env, stdio: ["ignore", "pipe", "pipe"] });
+    let child: ChildProcessByStdio<null, Readable, Readable>;
+    try {
+      child = spawn(spec.command, argv, { cwd: spec.cwd, env: spec.env, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (err) {
+      // spawn throws synchronously for arguments it rejects, such as a NUL byte in the prompt
+      rmSync(tmp, { recursive: true, force: true });
+      const error = `could not start ${spec.command}: ${(err as Error).message}`;
+      return resolve({ status: "failed", output: "", usage: emptyUsage(), turns: 0, durationMs: Date.now() - started, error });
+    }
 
     const usage = emptyUsage();
     let output = "";
@@ -103,6 +115,8 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
     let stderr = "";
     let pending = Buffer.alloc(0);
     let killTimer: NodeJS.Timeout | undefined;
+    let graceTimer: NodeJS.Timeout | undefined; // after settle or the last allowed turn
+    let stoppedAfterSettle = false; // settled but did not exit; we stopped it
 
     const stopChild = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
@@ -125,50 +139,68 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
         streamError = `invalid JSON from pi: ${line.slice(0, 200)}`;
         return stopChild();
       }
-      records++;
-      if (records === 1 && event.type !== "session") {
-        streamError = `pi stream did not start with a session header: ${line.slice(0, 200)}`;
-        return stopChild();
-      }
-      switch (event.type) {
-        case "message_end": {
-          const message = event.message as AssistantMessage | { role: string };
-          if (message.role !== "assistant") break;
-          const m = message as AssistantMessage;
-          addUsage(usage, m.usage);
-          const text = m.content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
-          if (text.trim() !== "") output = text;
-          if (m.stopReason === "error") assistantError = m.errorMessage ?? "provider error";
-          break;
+      try {
+        records++;
+        if (records === 1 && event.type !== "session") {
+          streamError = `pi stream did not start with a session header: ${line.slice(0, 200)}`;
+          return stopChild();
         }
-        case "tool_execution_start":
-          lastTool = event.toolName as string;
-          onProgress({ turns: turns + 1, lastTool }); // the turn in progress
-          break;
-        case "turn_end":
-          turns++;
-          onProgress({ turns, lastTool });
-          if (spec.maxTurns !== undefined && turns >= spec.maxTurns && !hitMaxTurns) {
-            hitMaxTurns = true;
-            stopChild();
+        // After the last allowed turn only the end of the run matters, but its cost still counts.
+        if (hitMaxTurns && event.type !== "agent_settled") {
+          const m = event.message as AssistantMessage | undefined;
+          if (event.type === "message_end" && m?.role === "assistant") addUsage(usage, m.usage);
+          return;
+        }
+        switch (event.type) {
+          case "message_end": {
+            const message = event.message as AssistantMessage | { role: string };
+            if (message.role !== "assistant") break;
+            const m = message as AssistantMessage;
+            addUsage(usage, m.usage);
+            const text = m.content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
+            if (text.trim() !== "") output = text;
+            // pi retries a failed turn: the last assistant message decides.
+            assistantError = m.stopReason === "error" ? (m.errorMessage ?? "provider error") : undefined;
+            break;
           }
-          break;
-        case "agent_settled":
-          settled = true;
-          if (event.aborted === true) childAborted = true;
-          break;
+          case "tool_execution_start":
+            lastTool = event.toolName as string;
+            onProgress({ turns: turns + 1, lastTool }); // the turn in progress
+            break;
+          case "turn_end":
+            turns++;
+            onProgress({ turns, lastTool });
+            if (spec.maxTurns !== undefined && turns >= spec.maxTurns) {
+              hitMaxTurns = true;
+              // Let the run settle by itself if this was its last turn anyway.
+              graceTimer = setTimeout(stopChild, SETTLE_GRACE_MS);
+            }
+            break;
+          case "agent_settled":
+            settled = true;
+            if (event.aborted === true) childAborted = true;
+            if (graceTimer) clearTimeout(graceTimer);
+            graceTimer = setTimeout(() => {
+              stoppedAfterSettle = true;
+              stopChild();
+            }, SETTLE_GRACE_MS);
+            break;
+        }
+      } catch (err) {
+        streamError = `bad record from pi (${(err as Error).message}): ${line.slice(0, 200)}`;
+        stopChild();
       }
     };
 
     child.stdout.on("data", (chunk: Buffer) => {
-      if (streamError || hitMaxTurns) return;
+      if (streamError) return;
       pending = Buffer.concat([pending, chunk]);
       // Split on LF bytes only: JSON strings may hold U+2028/U+2029, which readline treats as line ends.
       for (let nl = pending.indexOf(0x0a); nl !== -1; nl = pending.indexOf(0x0a)) {
         const line = pending.subarray(0, nl).toString("utf8").replace(/\r$/, "");
         pending = pending.subarray(nl + 1);
         if (line.trim() !== "") handleEvent(line);
-        if (streamError || hitMaxTurns) return;
+        if (streamError) return;
       }
     });
     child.stderr.on("data", (chunk: Buffer) => {
@@ -181,19 +213,20 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
       if (finished) return; // a failed spawn emits both "error" and "close"
       finished = true;
       if (killTimer) clearTimeout(killTimer);
+      if (graceTimer) clearTimeout(graceTimer);
       signal?.removeEventListener("abort", onAbort);
       rmSync(tmp, { recursive: true, force: true });
       if (parentAborted) return reject(new Error("aborted"));
 
       const base = { output, usage, turns, durationMs: Date.now() - started };
-      if (hitMaxTurns) return resolve({ status: "partial", ...base });
+      if (hitMaxTurns && !settled) return resolve({ status: "partial", ...base });
       const stderrTail = stderr.trimEnd().split("\n").slice(-STDERR_LINES).join("\n");
       const error =
         spawnError?.message ??
         streamError ??
         assistantError ??
         (childAborted ? "child run was aborted" : undefined) ??
-        (code !== 0 ? stderrTail || `pi exited with code ${code}` : undefined) ??
+        (code !== 0 && !stoppedAfterSettle ? stderrTail || `pi exited with code ${code}` : undefined) ??
         (!settled ? stderrTail || "pi exited before the run settled" : undefined);
       resolve(error === undefined ? { status: "completed", ...base } : { status: "failed", ...base, error });
     };

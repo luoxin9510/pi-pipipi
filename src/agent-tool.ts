@@ -39,14 +39,14 @@ export const outputSchema = Type.Object({
 });
 export type AgentResult = Omit<Static<typeof outputSchema>, "status"> & { status: Status };
 
-// Process-wide: every session in this pi process shares the limit.
+// Process-wide: every session in this pi process shares the limit, which the first session's config fixes.
 class Semaphore {
-  limit = 20;
+  limit: number | undefined;
   private running = 0;
   private waiting: (() => void)[] = [];
 
   async acquire(signal: AbortSignal | undefined): Promise<void> {
-    if (this.running < this.limit) {
+    if (this.running < this.limit!) {
       this.running++;
       return;
     }
@@ -74,6 +74,11 @@ class Semaphore {
 }
 
 const slots = new Semaphore();
+
+// Only the first call in the process sets the limit; later sessions' maxConcurrent is ignored.
+export function limitConcurrency(max: number): void {
+  slots.limit ??= max;
+}
 
 export function describeAgents({ agents }: Discovery): string {
   const list = [...agents.values()].map((a) => `- ${a.name}: ${a.description}`).join("\n");
@@ -131,7 +136,6 @@ async function executeAgent(
   }
   for (const field of def.inert) spec.warnings.push(inertNotice(field));
 
-  slots.limit = config.maxConcurrent;
   await slots.acquire(signal);
   let run: RunResult;
   try {

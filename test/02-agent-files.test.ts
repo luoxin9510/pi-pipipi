@@ -1,6 +1,6 @@
 // Ticket 02: load Claude Code agent files.
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { agentFile, flag, happyLines, loadTool, sandbox } from "./helpers.ts";
@@ -163,4 +163,48 @@ When invoked:
   const rec = s.record();
   assert.equal(flag(rec.argv, "--tools"), "read,grep,find,bash");
   assert.match(rec.systemPrompt!, /^You are a senior code reviewer/);
+});
+
+test("an unreadable directory inside an agents folder is skipped with a warning", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".pi/agents/ok.md"), def("ok", "readable"));
+  const locked = join(s.repo, ".pi/agents/locked");
+  s.write(join(locked, "hidden.md"), def("hidden", "unreachable"));
+  chmodSync(locked, 0o000);
+  try {
+    const notes: string[] = [];
+    const t = await loadTool({}, { cwd: s.repo, notes });
+    assert.match(t.tool.description, /- ok: readable/);
+    assert.doesNotMatch(t.tool.description, /- hidden:/);
+    assert.ok(notes.some((n) => n.includes(`cannot read agent directory ${locked}: EACCES`)), notes.join("\n"));
+  } finally {
+    chmodSync(locked, 0o755);
+  }
+});
+
+test("symlinked subdirectories of an agents folder are followed; a symlink loop is harmless", async () => {
+  const s = sandbox();
+  s.write(join(s.root, "shared/linked.md"), def("linked", "from a symlinked dir"));
+  const agents = join(s.repo, ".claude/agents");
+  mkdirSync(agents, { recursive: true });
+  symlinkSync(join(s.root, "shared"), join(agents, "team"));
+  symlinkSync(agents, join(agents, "loop"));
+  s.write(join(agents, "plain.md"), def("plain", "regular"));
+  const notes: string[] = [];
+  const t = await loadTool({}, { cwd: s.repo, notes });
+  assert.match(t.tool.description, /- linked: from a symlinked dir/);
+  assert.match(t.tool.description, /- plain: regular/);
+  assert.deepEqual(notes, []);
+});
+
+test("a project agent overriding a built-in warns; a user-dir override does not", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".claude/agents/Explore.md"), def("Explore", "project explore"));
+  s.write(join(s.home, ".claude/agents/Plan.md"), def("Plan", "user plan"));
+  const notes: string[] = [];
+  const t = await loadTool({}, { cwd: s.repo, notes });
+  assert.match(t.tool.description, /- Explore: project explore/);
+  const path = join(s.repo, ".claude/agents/Explore.md");
+  assert.ok(notes.includes(`pi-pipipi: project agent "Explore" overrides the built-in (${path})`), notes.join("\n"));
+  assert.equal(notes.filter((n) => /overrides the built-in/.test(n)).length, 1);
 });

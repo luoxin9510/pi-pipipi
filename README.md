@@ -103,7 +103,8 @@ Result:
 ```
 
 A child that fails returns `status: "failed"` instead of throwing, so scripts keep the structured result. Bad input
-(unknown agent, unmapped model alias, no usable tools, unknown `resume` id) throws.
+(unknown agent, no usable tools, unknown `resume` id) throws. A model value that is not a known alias is passed to
+`--model` unchanged, and the child fails with pi's own error.
 
 Children run with `PIPIPI_DEPTH=1` and get no `Agent` tool: nesting is one level. Child sessions are stored next to
 the parent session under `subagents/<parent session id>/`. With an in-memory parent session, children are in memory
@@ -119,7 +120,7 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
   "models": { "haiku": "anthropic/claude-haiku-5-5" },  // per-alias overrides of the defaults above
   "defaultModel": "haiku",                         // default "haiku"; "inherit" follows the session model
   "toolMap": { "WebFetch": "mcp__fetch__fetch" },  // merged over the built-in map
-  "maxConcurrent": 20,                             // running children per pi process; extra calls queue
+  "maxConcurrent": 20,                             // running children per pi process; extra calls queue. The first session's value wins for the process
   "piCommand": "pi"
 }
 ```

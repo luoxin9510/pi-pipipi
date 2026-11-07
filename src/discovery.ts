@@ -1,6 +1,6 @@
 // Find agent definitions in the five sources (spec 4.2), highest priority first.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,12 +23,25 @@ export function projectDirs(cwd: string): string[] {
   }
 }
 
-function markdownFiles(dir: string): string[] {
+// Symlinked directories are followed (like skills); realpath keeps a loop from repeating.
+function markdownFiles(dir: string, warnings: string[], seen = new Set<string>()): string[] {
   if (!existsSync(dir)) return [];
-  return readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith(".md"))
-    .map((e) => join(e.parentPath, e.name))
-    .sort();
+  const real = realpathSync(dir);
+  if (seen.has(real)) return [];
+  seen.add(real);
+  let entries: string[];
+  try {
+    entries = readdirSync(dir).sort();
+  } catch (err) {
+    warnings.push(`cannot read agent directory ${dir}: ${(err as NodeJS.ErrnoException).code}`);
+    return [];
+  }
+  return entries.flatMap((e) => {
+    const path = join(dir, e);
+    const stat = statSync(path, { throwIfNoEntry: false }); // a dangling symlink is skipped
+    if (stat?.isDirectory()) return markdownFiles(path, warnings, seen);
+    return stat?.isFile() && e.endsWith(".md") ? [path] : [];
+  });
 }
 
 export function agentSources(cwd: string): string[] {
@@ -46,9 +59,11 @@ export function discoverAgents(cwd: string): Discovery {
   const agents = new Map<string, AgentDefinition>();
   const warnings: string[] = [];
 
+  const projectSources = new Set(agentSources(cwd).slice(0, 2 * projectDirs(cwd).length));
+  const winners = new Map<string, { dir: string; path: string }>();
   for (const dir of agentSources(cwd)) {
     const seen = new Map<string, string>(); // name -> path, within this source
-    for (const path of markdownFiles(dir)) {
+    for (const path of markdownFiles(dir, warnings)) {
       const result = parseDefinition(path, readFileSync(path, "utf8"));
       if (!result.ok) {
         warnings.push(`skipped agent file ${path}: ${result.reason}`);
@@ -61,7 +76,15 @@ export function discoverAgents(cwd: string): Discovery {
         continue;
       }
       seen.set(def.name, path);
-      if (agents.has(def.name)) continue; // a higher-priority source already defined it
+      const winner = winners.get(def.name);
+      if (winner) {
+        // a higher-priority source already defined it
+        if (dir === BUILTIN_DIR && projectSources.has(winner.dir)) {
+          warnings.push(`project agent "${def.name}" overrides the built-in (${winner.path})`);
+        }
+        continue;
+      }
+      winners.set(def.name, { dir, path });
       agents.set(def.name, dir === BUILTIN_DIR ? { ...def, source: `builtin:${def.name}` } : def);
       for (const field of def.inert) warnings.push(`${def.name}: ${inertNotice(field)}`);
     }
