@@ -30,12 +30,15 @@ moved to one seam, mutation-checked) -> code-review x2 (fixed) -> pr (PR #1 read
 
 - Installed into the owner's pi (`pi install ~/Developer/pi-pipipi`); the old `pi-subagents` package was removed.
 - Ticket 09 closed: README smoke test run through the installed package, 3 x completed on haiku.
-- `npm run eval` (evals/, 13 cases, haiku for parent and children): 39/39 over 3 runs, $0.024.
+- `npm run eval` (evals/, 13 cases, haiku for parent and children, defaultModel pinned, model checked on every
+  result/message): 39/39 over 3 runs, $0.028.
 - The first eval run found a bug: a last allowed turn that called tools, followed by a quick next turn that settled
   within the 2 s grace, was reported `completed` though the run went past `maxTurns`. Fixed in runner.ts (a turn
   ending in `toolUse` at the limit stops the child at once: `partial`), with a test (63 tests).
-- `npm run stress`: 20 at once 20/20 in 5.7 s; 40 with limit 20 40/40 in 9.7 s; 200 fake 5.6 s vs 5.5 s ideal; the
+- `npm run stress`: 20 at once 20/20 in 4.9 s; 40 with limit 20 40/40 in 10.4 s; 200 fake 5.6 s vs 5.5 s ideal; the
   cap holds at 20 children; ~220 MB per child (4.5 GB at 20). Numbers in README.
+- PR #2 got a two-axis code review; its findings were fixed (flag validation, abortable case timeout, haiku pinned
+  and checked, spec.md maxTurns line, `closed` status documented in triage-labels.md).
 
 ## Open
 

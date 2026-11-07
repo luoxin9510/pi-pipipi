@@ -19,6 +19,7 @@ subprocesses. Design: `.scratch/pi-pipipi/decisions.md` and `spec.md`. Tickets: 
 - `src/builtin/*.md` built-in agents in Claude Code format.
 - `test/*.test.ts` node:test, run with `npm test` (Node >= 22.18 strips types).
 - `test/fake-pi.mjs` stands in for the `pi` binary. Tests point `piCommand` at it.
+- `evals/` real-model evals, `stress/` concurrency test. Dev scripts, not shipped.
 
 ## Tests
 

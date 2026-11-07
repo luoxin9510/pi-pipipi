@@ -164,8 +164,15 @@ npm run eval -- --only resume      # cases whose name contains "resume"
 cannot write, custom agent tools, resume, `maxTurns`, skills, context files vs `omitClaudeMd`, model aliases, a bad
 model, no nesting, parallel runs). Two start a real parent `pi` on haiku with codemode and this checkout
 (`--no-extensions -e builtin:codemode -e ./src/index.ts`), one with a given script and one where the model decides to
-delegate. Cases are graded from the structured result and side effects. Results go to `evals/results/` (ignored by git).
-Last run (pi 1.5.0): 39/39 over 3 runs, $0.024 in all.
+delegate. Cases are graded from the structured result and side effects. `defaultModel` is pinned to `haiku` whatever
+your settings say, and every case checks that every result (or, for the parent cases, every assistant message of the
+parent and its children) ran on haiku. A case running over 5 minutes is aborted and its children stopped. Results go
+to `evals/results/` (ignored by git).
+
+Last run (pi 1.5.0): 39/39 over 3 runs, $0.028 in all. The first version of the suite found a bug that the fake-pi
+tests had missed (a run could go past `maxTurns` and still be reported `completed`), fixed since. Two checks depend on
+the model or on timing and could fail without a bug: `maxTurns` needs haiku to call a tool on its first turn, and the
+parallel case needs wall time under 0.7 × the summed run times.
 
 ### Stress test
 
@@ -179,13 +186,17 @@ Last run (Apple M5, 10 cores, 24 GB; pi 1.5.0; each call an Explore reading one 
 
 | | 20 calls | 40 calls (limit 20) | 200 fake calls (limit 20, 550 ms each) |
 |---|---|---|---|
-| completed | 20/20 | 40/40 | 200/200 |
-| wall | 5.7 s | 9.7 s | 5.6 s (ideal 5.5 s) |
-| call latency p50 / p95 | 4.7 / 5.3 s | 6.4 / 9.4 s | 2.8 / 5.5 s |
-| queue + spawn p50 / p95 | 9 / 28 ms | 31 ms / 5.6 s | (queue) |
-| peak children | 20 | 20 | 20 |
-| peak RSS (all children) | 4.5 GB | 4.5 GB | 0.9 GB |
-| cost | $0.0085 | $0.0058 | — |
+| completed (all on haiku, right answer) | 20/20 | 40/40 | 200/200 |
+| wall | 4.9 s | 10.4 s | 5.6 s (ideal 5.5 s) |
+| call latency p50 / p95 | 4.6 / 4.9 s | 6.0 / 9.3 s | 2.9 / 5.5 s |
+| latency − child run p50 / p95 (queue wait + spawn) | 9 / 26 ms | 29 ms / 5.4 s | 2.3 / 5.0 s |
+| peak children (sampled from `ps`) | 20 | 20 | 20 |
+| peak RSS (all children) | 3.7 GB | 4.5 GB | 0.9 GB |
+| cost | $0.0086 | $0.0059 | — |
+
+The 40-call phase costs less than the 20-call one because it runs second: the shared system prompt is then in the
+prompt cache. One earlier run sampled 21 children once (`ps` caught a short-lived extra process); the limit itself is a
+semaphore and never lets more than 20 children start.
 
 Each child is a full `pi` that loads your installed extensions, about 220 MB each. With the default limit of 20,
 plan for about 4.5 GB of memory while a large fan-out runs. Lower `maxConcurrent` on smaller machines.

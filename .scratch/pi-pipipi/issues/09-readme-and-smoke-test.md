@@ -4,7 +4,7 @@
 
 **Blocked by:** 03, 04, 05, 06, 07, 08
 
-**Status:** closed
+**Status:** closed (done 2026-11-08)
 
 - [x] Install, codemode requirement, usage example, field compatibility table, result shape, config
 - [x] Notes: description snapshot until `/reload`, long prompts via file, children inherit trust, nesting is one level
