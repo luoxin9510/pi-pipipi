@@ -8,7 +8,7 @@ import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ParentContext, resolveChild } from "./resolve.ts";
 import { storedAgentType, writeAgentMeta } from "./sessions.ts";
-import { runChild, type RunResult, type Status, usageSchema } from "./runner.ts";
+import { runChild, type RunResult, type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
 
@@ -24,8 +24,6 @@ const parameters = Type.Object({
   name: Type.Optional(Type.String({ description: "Not supported; ignored" })),
 });
 export type AgentInput = Static<typeof parameters>;
-
-const STATUSES = ["completed", "partial", "failed"] as const satisfies readonly Status[];
 
 export const outputSchema = Type.Object({
   status: StringEnum(STATUSES),
@@ -138,7 +136,12 @@ async function executeAgent(
   let run: RunResult;
   try {
     if (parent.sessionFile && input.resume === undefined) writeAgentMeta(parent, spec.agentId, agentType);
-    run = await runChild(spec, signal, (p) => onUpdate?.(`${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`));
+    let last = "";
+    run = await runChild(spec, signal, (p) => {
+      const text = `${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`;
+      if (text !== last) onUpdate?.(text); // a turn's end repeats the update from its last tool start
+      last = text;
+    });
   } finally {
     slots.release();
   }

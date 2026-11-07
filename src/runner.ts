@@ -23,7 +23,8 @@ export const usageSchema = Type.Object({
 });
 export type Usage = Static<typeof usageSchema>;
 
-export type Status = "completed" | "partial" | "failed";
+export const STATUSES = ["completed", "partial", "failed"] as const;
+export type Status = (typeof STATUSES)[number];
 
 export interface RunResult {
   status: Status;
@@ -97,8 +98,8 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
     let assistantError: string | undefined;
     let streamError: string | undefined; // bad stream: we stopped the child
     let hitMaxTurns = false;
-    let aborted = false;
-    let agentAborted = false; // the child reported agent_settled with aborted: true
+    let parentAborted = false; // our caller aborted
+    let childAborted = false; // the child reported agent_settled with aborted: true
     let stderr = "";
     let pending = Buffer.alloc(0);
     let killTimer: NodeJS.Timeout | undefined;
@@ -111,7 +112,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
     };
 
     const onAbort = () => {
-      aborted = true;
+      parentAborted = true;
       stopChild();
     };
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -154,7 +155,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
           break;
         case "agent_settled":
           settled = true;
-          if (event.aborted === true) agentAborted = true;
+          if (event.aborted === true) childAborted = true;
           break;
       }
     };
@@ -182,7 +183,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
       if (killTimer) clearTimeout(killTimer);
       signal?.removeEventListener("abort", onAbort);
       rmSync(tmp, { recursive: true, force: true });
-      if (aborted) return reject(new Error("aborted"));
+      if (parentAborted) return reject(new Error("aborted"));
 
       const base = { output, usage, turns, durationMs: Date.now() - started };
       if (hitMaxTurns) return resolve({ status: "partial", ...base });
@@ -191,7 +192,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
         spawnError?.message ??
         streamError ??
         assistantError ??
-        (agentAborted ? "child run was aborted" : undefined) ??
+        (childAborted ? "child run was aborted" : undefined) ??
         (code !== 0 ? stderrTail || `pi exited with code ${code}` : undefined) ??
         (!settled ? stderrTail || "pi exited before the run settled" : undefined);
       resolve(error === undefined ? { status: "completed", ...base } : { status: "failed", ...base, error });

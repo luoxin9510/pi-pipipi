@@ -29,7 +29,7 @@ test("10: completed run: output is the last assistant text, usage summed, turns 
   assert.equal(r.usage.input, 160);
   assert.equal(r.usage.output, 35);
   assert.equal(r.usage.cost.total, 1);
-  assert.deepEqual(t.updates, ["test task: turn 1, grep", "test task: turn 1, grep", "test task: turn 2, read", "test task: turn 2, read", "test task: turn 3, read"]);
+  assert.deepEqual(t.updates, ["test task: turn 1, grep", "test task: turn 2, read", "test task: turn 3, read"]);
 });
 
 test("11: maxTurns stops the child and returns partial", async () => {

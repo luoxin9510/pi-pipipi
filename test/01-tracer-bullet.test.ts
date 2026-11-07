@@ -48,7 +48,7 @@ test("a default call runs general-purpose and returns a completed AgentResult", 
   assert.deepEqual(res.details, r);
   assert.equal(res.isError, false);
   assert.match(res.content[0].text, /^general-purpose completed \(agentId [a-z0-9]{12}, 3 turns, [\d.]+s\)\n\nfinal answer$/);
-  assert.deepEqual(t.updates, ["test task: turn 1, grep", "test task: turn 1, grep", "test task: turn 2, read", "test task: turn 2, read", "test task: turn 3, read"]);
+  assert.deepEqual(t.updates, ["test task: turn 1, grep", "test task: turn 2, read", "test task: turn 3, read"]);
 });
 
 test("the child gets PIPIPI_DEPTH=1, the parent's cwd, closed stdin, JSON print mode", async () => {
