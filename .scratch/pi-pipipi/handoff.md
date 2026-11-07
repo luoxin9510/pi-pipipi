@@ -4,8 +4,9 @@ Status as of 2026-11-07. Branch: `pipipi-v1` (built on `claude/exciting-tesla-w5
 
 ## Done
 
-- `decisions.md`, `spec.md`: v1 design. The 7 spec choices beyond decisions.md were taken as written
-  (owner said "continue development").
+- `decisions.md`, `spec.md`: v1 design. spec.md is NOT approved: it still needs a grilling session with the owner,
+  including the 7 choices beyond decisions.md. The code on this branch was written too early and is a prototype
+  against the unapproved spec; change it to whatever the grill decides.
 - Tickets 01-09 in `issues/` are all implemented.
 - `src/`: config, definition, discovery, resolve, runner, agent-tool, index, built-in Explore/Plan/general-purpose.
 - `test/`: all 18 spec cases (+5 extra) pass against `test/fake-pi.mjs`; `tsc` clean.
@@ -22,5 +23,5 @@ Status as of 2026-11-07. Branch: `pipipi-v1` (built on `claude/exciting-tesla-w5
 
 ## Open
 
-- Owner review of PR, then merge to `main`.
+- Grill spec.md with the owner. Then update spec, tickets and code. PR #1 is a draft until then.
 - v2 candidates: tier B fields (mcpServers, worktree isolation, autoCompactWindow), background runs, nesting > 1.
