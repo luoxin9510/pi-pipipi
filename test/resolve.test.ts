@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readConfig } from "../src/config.ts";
@@ -6,8 +7,7 @@ import type { AgentDefinition } from "../src/definition.ts";
 import { type ParentContext, resolveChild } from "../src/resolve.ts";
 import { sandbox } from "./helpers.ts";
 
-const config = (extra: Record<string, unknown> = {}) =>
-  readConfig({ models: { haiku: "anthropic/claude-haiku-5-5", opus: "anthropic/claude-opus-5-5" }, ...extra });
+const config = (extra: Record<string, unknown> = {}) => readConfig(extra);
 const def = (extra: Partial<AgentDefinition> = {}): AgentDefinition => ({
   name: "a", description: "d", prompt: "PROMPT", source: "/a.md", inert: [], ...extra,
 });
@@ -17,16 +17,20 @@ const parent = (extra: Partial<ParentContext> = {}): ParentContext => ({
 const input = (extra = {}) => ({ description: "t", prompt: "go", ...extra });
 const flag = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 
-test("6: model order, aliases, inherit, missing alias throws", () => {
+test("6: model order, default haiku, alias defaults and overrides, explicit inherit", () => {
   const m = (d: Partial<AgentDefinition>, i = {}, c = config(), p = parent()) => resolveChild(def(d), input(i), c, p).model;
-  assert.equal(m({}), "openai/gpt-x", "nothing set -> parent");
-  assert.equal(m({}, {}, config({ defaultModel: "haiku" })), "anthropic/claude-haiku-5-5", "settings default");
-  assert.equal(m({ model: "opus" }, {}, config({ defaultModel: "haiku" })), "anthropic/claude-opus-5-5", "definition beats default");
-  assert.equal(m({ model: "opus" }, { model: "haiku" }), "anthropic/claude-haiku-5-5", "call beats definition");
-  assert.equal(m({ model: "inherit" }, {}, config({ defaultModel: "haiku" })), "openai/gpt-x", "inherit -> parent");
+  assert.equal(m({}), "anthropic/claude-haiku-5-5", "nothing set -> haiku, never the parent model");
+  assert.equal(m({}, {}, config({ defaultModel: "sonnet" })), "anthropic/claude-sonnet-5-5", "settings default");
+  assert.equal(m({}, {}, config({ defaultModel: "inherit" })), "openai/gpt-x", "settings default can be inherit");
+  assert.equal(m({ model: "opus" }), "anthropic/claude-opus-5-5", "definition beats default");
+  assert.equal(m({ model: "fable" }), "anthropic/claude-fable-5-1");
+  assert.equal(m({ model: "opus" }, { model: "sonnet" }), "anthropic/claude-sonnet-5-5", "call beats definition");
+  assert.equal(m({ model: "inherit" }), "openai/gpt-x", "explicit inherit -> parent");
+  assert.equal(m({}, { model: "inherit" }), "openai/gpt-x", "call inherit -> parent");
   assert.equal(m({ model: "google/gemini-9" }), "google/gemini-9", "full id passes through");
-  assert.throws(() => m({ model: "sonnet" }), /pipipi\.models\.sonnet is not configured/);
-  assert.throws(() => m({}, {}, config(), parent({ model: undefined })), /no model to inherit/);
+  assert.equal(m({ model: "haiku" }, {}, config({ models: { haiku: "deepseek/deepseek-v4" } })), "deepseek/deepseek-v4", "settings override one alias");
+  assert.equal(m({ model: "opus" }, {}, config({ models: { haiku: "deepseek/deepseek-v4" } })), "anthropic/claude-opus-5-5", "others keep defaults");
+  assert.throws(() => m({ model: "inherit" }, {}, config(), parent({ model: undefined })), /no model to inherit/);
 
   const t = (d: Partial<AgentDefinition>, i = {}) => flag(resolveChild(def(d), input(i), config(), parent()).args, "--thinking");
   assert.equal(t({}), "medium");
@@ -62,11 +66,16 @@ test("7: tool mapping, deny first, Bash(...) removes bash, mcp passes, unmapped 
 test("8: skills are preloaded into the system prompt; a missing skill warns", () => {
   const s = sandbox();
   s.write(join(s.repo, ".claude/skills/tdd/SKILL.md"), "---\nname: tdd\ndescription: x\n---\nRed green refactor.\n");
-  s.write(join(s.home, ".pi/agent/skills/folder-name/SKILL.md"), "---\nname: review\ndescription: y\n---\nReview carefully.\n");
+  s.write(join(s.home, ".pi/agent/skills/group/deep/folder-name/SKILL.md"), "---\nname: review\ndescription: y\n---\nReview carefully.\n");
+  // A skill directory reached through a symlink, without frontmatter name: matched by directory name.
+  s.write(join(s.root, "elsewhere/linked/SKILL.md"), "Linked skill body.\n");
+  mkdirSync(join(s.repo, ".agents/skills"), { recursive: true });
+  symlinkSync(join(s.root, "elsewhere/linked"), join(s.repo, ".agents/skills/linked"));
   s.write(join(s.home, ".claude/skills/tdd/SKILL.md"), "---\nname: tdd\n---\nLOWER PRIORITY\n");
-  const r = resolveChild(def({ skills: ["tdd", "review", "ghost"] }), input(), config(), parent({ cwd: s.repo }), new Date("2026-11-07T12:00:00Z"));
+  const r = resolveChild(def({ skills: ["tdd", "review", "linked", "ghost"] }), input(), config(), parent({ cwd: s.repo }), new Date("2026-11-07T12:00:00Z"));
   assert.match(r.systemPrompt, /^PROMPT\n\n# Skill: tdd\n\n---\nname: tdd[\s\S]*Red green refactor\./);
   assert.match(r.systemPrompt, /# Skill: review\n\n[\s\S]*Review carefully\./);
+  assert.match(r.systemPrompt, /# Skill: linked\n\nLinked skill body\./);
   assert.doesNotMatch(r.systemPrompt, /LOWER PRIORITY/);
   assert.match(r.systemPrompt, /# Environment\nWorking directory: .*repo\nPlatform: \w+\nDate: 2026-11-07$/);
   assert.deepEqual(r.warnings, ['skill "ghost" not found']);

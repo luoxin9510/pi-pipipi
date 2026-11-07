@@ -2,11 +2,19 @@
 
 export interface Config {
   models: Record<string, string>;
-  defaultModel?: string;
+  defaultModel: string;
   toolMap: Record<string, string>;
   maxConcurrent: number;
   piCommand: string;
 }
+
+// Claude Code model aliases -> the same-name Anthropic models. Settings override per alias.
+export const DEFAULT_MODELS: Record<string, string> = {
+  opus: "anthropic/claude-opus-5-5",
+  sonnet: "anthropic/claude-sonnet-5-5",
+  haiku: "anthropic/claude-haiku-5-5",
+  fable: "anthropic/claude-fable-5-1",
+};
 
 function stringMap(value: unknown, key: string): Record<string, string> {
   if (value === undefined) return {};
@@ -36,8 +44,8 @@ export function readConfig(raw: unknown): Config {
   }
 
   return {
-    models: stringMap(r.models, "models"),
-    defaultModel: optionalString(r.defaultModel, "defaultModel"),
+    models: { ...DEFAULT_MODELS, ...stringMap(r.models, "models") },
+    defaultModel: optionalString(r.defaultModel, "defaultModel") ?? "haiku",
     toolMap: stringMap(r.toolMap, "toolMap"),
     maxConcurrent: maxConcurrent as number,
     piCommand: optionalString(r.piCommand, "piCommand") ?? "pi",

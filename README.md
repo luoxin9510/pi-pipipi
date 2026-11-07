@@ -32,23 +32,58 @@ Existing Claude Code agent files work unchanged. Sources, highest priority first
 4. `~/.claude/agents/`
 5. Built-in: `Explore`, `Plan`, `general-purpose`
 
-Definitions are re-read on every call. Invalid files are skipped with a warning.
+Definitions are re-read on every call, so edits apply at once. The agent list in the tool's description is built at
+session start: a new agent can be called right away but shows up in the description only after `/reload`.
+Invalid files are skipped with a warning.
 
 | Field | Handling |
 |---|---|
 | `name`, `description`, body | Same as Claude Code. The body replaces pi's default system prompt. |
-| `tools`, `disallowedTools` | Mapped to `--tools` / `--exclude-tools`. `Read→read`, `Write→write`, `Edit→edit`, `Bash→bash`, `Grep→grep`, `Glob→find`, `LS→ls`, `mcp__*` unchanged. A `Bash(...)` deny rule removes the whole tool. Tools with no pi equivalent are dropped with a warning. |
-| `model` | `opus`/`sonnet`/`haiku`/`fable` via `pipipi.models`; `inherit` = parent model; anything else is passed to `--model`. |
+| `tools`, `disallowedTools` | Without `tools` the agent gets your normal pi tools (`defaultTools`) and every installed extension. Otherwise mapped to `--tools` / `--exclude-tools`. `Read→read`, `Write→write`, `Edit→edit`, `Bash→bash`, `Grep→grep`, `Glob→find`, `LS→ls`, `mcp__*` unchanged. A `Bash(...)` deny rule removes the whole tool. Tools with no pi equivalent are dropped with a warning. |
+| `model` | See [Model selection](#model-selection). |
 | `effort` | `--thinking` |
 | `maxTurns` | The child is stopped after that many turns; the result is `partial`. |
-| `skills` | Full `SKILL.md` text preloaded into the system prompt. |
+| `skills` | Full `SKILL.md` text preloaded into the system prompt. Searched (recursively) in `.pi/skills`, `.agents/skills`, `.claude/skills` from cwd up to the repo root, then `~/.pi/agent/skills`, `~/.agents/skills`, `~/.claude/skills`. Skill paths from settings or pi packages are not searched. |
 | `omitClaudeMd` | `--no-context-files` |
 | `mcpServers`, `isolation`, `autoCompactWindow`, `color`, `permissionMode`, `hooks`, `memory`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
+
+## Model selection
+
+**Subagents run on Claude Haiku 5.5 by default, not on your session's model.** The model is picked in this order:
+
+1. `model` in the `Agent` call
+2. `model` in the agent definition
+3. `pipipi.defaultModel` in settings, default `"haiku"`
+
+The built-in agents (`Explore`, `Plan`, `general-purpose`) set no model, so they run on haiku too.
+
+Values:
+
+| Value | Model |
+|---|---|
+| `haiku` (default) | `anthropic/claude-haiku-5-5` |
+| `sonnet` | `anthropic/claude-sonnet-5-5` |
+| `opus` | `anthropic/claude-opus-5-5` |
+| `fable` | `anthropic/claude-fable-5-1` |
+| `inherit` | the parent session's current model. Only used when written explicitly. |
+| anything else | passed to `pi --model` as is (`provider/id` or a pattern pi resolves) |
+
+To follow your session's model everywhere, set `"defaultModel": "inherit"`. To use another provider for an alias,
+remap it in `pipipi.models`; the other aliases keep their defaults.
+
+Without Anthropic credentials, haiku (and so every agent by default) fails with a provider error in `error`. Set
+`defaultModel` to `inherit` or remap the aliases you use, for example:
+
+```jsonc
+"pipipi": { "models": { "haiku": "<provider>/<cheap-model-id>", "sonnet": "<provider>/<model-id>" } }
+```
 
 ## The Agent tool
 
 Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume? }`.
-`run_in_background`, `isolation` and `name` are accepted and ignored with a warning.
+`subagent_type` defaults to `general-purpose`. `run_in_background`, `isolation` and `name` are accepted and ignored
+with a warning. Prompts over 100 KB are handed to the child as an attached file (`@file`), because Linux limits one
+command-line argument to 128 KiB.
 
 Result:
 
@@ -72,7 +107,8 @@ A child that fails returns `status: "failed"` instead of throwing, so scripts ke
 
 Children run with `PIPIPI_DEPTH=1` and get no `Agent` tool: nesting is one level. Child sessions are stored next to
 the parent session under `subagents/<parent session id>/`. With an in-memory parent session, children are in memory
-too and cannot be resumed. Children inherit the parent's project trust.
+too and cannot be resumed. A resume without `subagent_type` reuses the agent type of the first run; a different
+`subagent_type` is an error. Children inherit the parent's project trust.
 
 ## Config
 
@@ -80,13 +116,8 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
 
 ```jsonc
 "pipipi": {
-  "models": {
-    "opus": "anthropic/claude-opus-5-5",
-    "sonnet": "anthropic/claude-sonnet-5-5",
-    "haiku": "anthropic/claude-haiku-5-5",
-    "fable": "anthropic/claude-fable-5-1"
-  },
-  "defaultModel": "haiku",                         // used when neither the call nor the definition names a model
+  "models": { "haiku": "anthropic/claude-haiku-5-5" },  // per-alias overrides of the defaults above
+  "defaultModel": "haiku",                         // default "haiku"; "inherit" follows the session model
   "toolMap": { "WebFetch": "mcp__fetch__fetch" },  // merged over the built-in map
   "maxConcurrent": 20,                             // running children per pi process; extra calls queue
   "piCommand": "pi"

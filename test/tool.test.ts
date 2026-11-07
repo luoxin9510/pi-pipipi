@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { agentFile, ev, happyLines, loadTool, sandbox } from "./helpers.ts";
@@ -10,7 +10,7 @@ test("15: end-to-end execute through fake pi returns the AgentResult shape", asy
   const s = sandbox();
   s.write(join(s.repo, ".claude/agents/scout.md"), agentFile("name: scout\ndescription: Finds things\ntools: Read, WebFetch\ncolor: red", "Scout prompt."));
   s.scenario({ lines: happyLines("found it") });
-  const t = await loadTool({ models: { haiku: "anthropic/claude-haiku-5-5" } }, { cwd: s.repo });
+  const t = await loadTool({}, { cwd: s.repo });
 
   assert.equal(t.tool.exposure, "codemode");
   assert.match(t.tool.description, /- scout: Finds things/);
@@ -43,11 +43,16 @@ test("15: end-to-end execute through fake pi returns the AgentResult shape", asy
   assert.equal(flag(rec.argv, "--tools"), "read");
 });
 
-test("15b: default agent is general-purpose; unknown subagent_type throws with the list", async () => {
+test("15b: default agent is general-purpose on haiku; unknown subagent_type throws with the list", async () => {
   const s = sandbox();
   s.scenario({ lines: happyLines() });
   const t = await loadTool({}, { cwd: s.repo });
-  assert.equal((await t.run({})).structuredContent.agentType, "general-purpose");
+  const r = (await t.run({})).structuredContent;
+  assert.equal(r.agentType, "general-purpose");
+  assert.equal(r.model, "anthropic/claude-haiku-5-5", "built-ins default to haiku, not the parent model");
+  for (const name of ["Explore", "Plan"]) {
+    assert.equal((await t.run({ subagent_type: name })).structuredContent.model, "anthropic/claude-haiku-5-5");
+  }
   await assert.rejects(t.run({ subagent_type: "nope" }), /unknown subagent_type "nope"\. Available: .*Explore/);
 });
 
@@ -62,26 +67,29 @@ test("15c: a long prompt goes through a file", async () => {
   assert.equal(rec.promptFile, prompt);
 });
 
-test("16: resume reuses the agentId and session flags; unknown agentId throws", async () => {
+test("16: resume reuses agentId, session flags and stored agentType; mismatch and unknown id throw", async () => {
   const s = sandbox();
   const parentFile = join(s.root, "sessions", "2026-11-07_parent-id.jsonl");
   const t = await loadTool({}, { cwd: s.repo, sessionFile: parentFile, sessionId: "parent-id" });
   const dir = join(s.root, "sessions", "subagents", "parent-id");
 
   s.scenario({ lines: happyLines("first") });
-  const first = (await t.run({})).structuredContent;
+  const first = (await t.run({ subagent_type: "Explore" })).structuredContent;
   const firstArgs = s.record().argv;
   assert.equal(flag(firstArgs, "--session-dir"), dir);
   assert.equal(flag(firstArgs, "--session-id"), first.agentId);
 
-  // Pi writes <timestamp>_<id>.jsonl into the session dir; the fake does it here.
-  s.write(join(dir, `2026-11-07T00-00-00-000Z_${first.agentId}.jsonl`), "");
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, `${first.agentId}.json`), "utf8")), { agentType: "Explore" });
+
   s.scenario({ lines: happyLines("second") });
   const second = (await t.run({ resume: first.agentId })).structuredContent;
   assert.equal(second.agentId, first.agentId);
+  assert.equal(second.agentType, "Explore", "no subagent_type -> the stored type");
+  assert.match(s.record().systemPrompt!, /file search specialist/);
   assert.equal(second.output, "second");
   assert.equal(flag(s.record().argv, "--session-id"), first.agentId);
 
+  await assert.rejects(t.run({ resume: first.agentId, subagent_type: "Plan" }), /is a "Explore" agent/);
   await assert.rejects(t.run({ resume: "unknownid123" }), /no subagent session "unknownid123"/);
   await assert.rejects(t.run({ resume: "../evil" }), /invalid resume id/);
 

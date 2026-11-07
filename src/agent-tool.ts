@@ -1,12 +1,14 @@
 // The `Agent` tool (spec 7): discovery -> resolve -> concurrency slot -> run.
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type JsonValue, StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { Config } from "./config.ts";
 import { EFFORTS } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
-import { type CallInput, type ParentContext, resolveChild } from "./resolve.ts";
+import { agentMetaFile, type CallInput, type ParentContext, resolveChild, storedAgentType } from "./resolve.ts";
 import { runChild, type RunResult } from "./runner.ts";
 
 export const DEFAULT_AGENT = "general-purpose";
@@ -15,9 +17,9 @@ export const parameters = Type.Object({
   description: Type.String({ description: "Short (3-5 word) label for the task, shown in progress" }),
   prompt: Type.String({ description: "The full task for the agent. It sees nothing else from this session." }),
   subagent_type: Type.Optional(Type.String({ description: `Agent to run. Default "${DEFAULT_AGENT}".` })),
-  model: Type.Optional(Type.String({ description: 'Model override: "opus", "sonnet", "haiku", "fable", "inherit" or a pi model pattern' })),
+  model: Type.Optional(Type.String({ description: 'Model override: "opus", "sonnet", "haiku", "fable", "inherit" (the parent\'s model) or a pi model pattern. Default: the agent\'s model, else haiku.' })),
   effort: Type.Optional(StringEnum(EFFORTS, { description: "Thinking level override" })),
-  resume: Type.Optional(Type.String({ description: "agentId from an earlier result, to continue that agent's session" })),
+  resume: Type.Optional(Type.String({ description: "agentId from an earlier result, to continue that agent's session. subagent_type may be omitted." })),
   run_in_background: Type.Optional(Type.Boolean({ description: "Not supported; ignored" })),
   isolation: Type.Optional(Type.String({ description: "Not supported; ignored" })),
   name: Type.Optional(Type.String({ description: "Not supported; ignored" })),
@@ -126,7 +128,15 @@ export async function executeAgent(
   config: Config,
   parent: ParentContext,
 ): Promise<AgentResult> {
-  const agentType = input.subagent_type ?? DEFAULT_AGENT;
+  let agentType = input.subagent_type;
+  if (input.resume !== undefined) {
+    const stored = storedAgentType(parent, input.resume);
+    if (agentType !== undefined && agentType !== stored) {
+      throw new Error(`agent "${input.resume}" is a "${stored}" agent; resume it with that subagent_type or none`);
+    }
+    agentType = stored;
+  }
+  agentType ??= DEFAULT_AGENT;
   const { agents } = discoverAgents(parent.cwd);
   const def = agents.get(agentType);
   if (!def) throw new Error(`unknown subagent_type "${agentType}". Available: ${[...agents.keys()].join(", ")}`);
@@ -136,6 +146,11 @@ export async function executeAgent(
     if (input[field] !== undefined) spec.warnings.push(`"${field}" is not supported and was ignored`);
   }
   for (const field of def.inert) spec.warnings.push(`field "${field}" has no effect in pi-pipipi`);
+  if (parent.sessionFile && input.resume === undefined) {
+    const meta = agentMetaFile(parent, spec.agentId);
+    mkdirSync(dirname(meta), { recursive: true });
+    writeFileSync(meta, JSON.stringify({ agentType }));
+  }
 
   slots.limit = config.maxConcurrent;
   await slots.acquire(signal);

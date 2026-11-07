@@ -1,9 +1,9 @@
 // Turn a definition + call input + config into the child process spec (spec 5).
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { Config } from "./config.ts";
 import type { AgentDefinition } from "./definition.ts";
@@ -40,8 +40,6 @@ export interface ChildSpec {
   warnings: string[];
 }
 
-const MODEL_ALIASES = ["opus", "sonnet", "haiku", "fable"];
-
 const BUILTIN_TOOL_MAP: Record<string, string> = {
   Read: "read", Write: "write", Edit: "edit", Bash: "bash", Grep: "grep", Glob: "find", LS: "ls",
 };
@@ -50,17 +48,13 @@ const BUILTIN_TOOL_MAP: Record<string, string> = {
 const NESTING_TOOLS = ["Agent", "Task"];
 
 export function resolveModel(input: CallInput, def: AgentDefinition, config: Config, parent: ParentContext): string {
-  const choice = input.model ?? def.model ?? config.defaultModel ?? "inherit";
+  // The parent model is used only for an explicit "inherit"; the default is config.defaultModel ("haiku").
+  const choice = input.model ?? def.model ?? config.defaultModel;
   if (choice === "inherit") {
     if (!parent.model) throw new Error("the parent session has no model to inherit");
     return parent.model;
   }
-  if (MODEL_ALIASES.includes(choice)) {
-    const mapped = config.models[choice];
-    if (!mapped) throw new Error(`pipipi.models.${choice} is not configured`);
-    return mapped;
-  }
-  return choice;
+  return config.models[choice] ?? choice;
 }
 
 // Map Claude Code tool names to pi names. undefined = no pi equivalent (or nesting).
@@ -119,15 +113,29 @@ export function skillDirs(cwd: string): string[] {
   ];
 }
 
-// Each skill is <skills dir>/<entry>/SKILL.md, matched by its frontmatter name, else the directory name.
+// Directories holding SKILL.md, found recursively like pi does. Symlinks are followed; a skill directory is not
+// searched further (its subdirectories are the skill's own files).
+function skillFiles(dir: string, seen = new Set<string>()): string[] {
+  if (!existsSync(dir)) return [];
+  const real = realpathSync(dir);
+  if (seen.has(real)) return [];
+  seen.add(real);
+  const own = join(dir, "SKILL.md");
+  if (existsSync(own) && statSync(own).isFile()) return [own];
+  return readdirSync(dir)
+    .sort()
+    .filter((e) => !e.startsWith(".") && e !== "node_modules")
+    .map((e) => join(dir, e))
+    .filter((p) => existsSync(p) && statSync(p).isDirectory())
+    .flatMap((p) => skillFiles(p, seen));
+}
+
+// Matched by frontmatter name, else the directory name. Earlier dirs win.
 function findSkill(name: string, dirs: string[]): string | undefined {
   for (const dir of dirs) {
-    if (!existsSync(dir)) continue;
-    for (const entry of readdirSync(dir).sort()) {
-      const file = join(dir, entry, "SKILL.md");
-      if (!existsSync(file) || !statSync(file).isFile()) continue;
+    for (const file of skillFiles(dir)) {
       const text = readFileSync(file, "utf8");
-      if ((frontmatterName(text) ?? entry) === name) return text;
+      if ((frontmatterName(text) ?? basename(dirname(file))) === name) return text;
     }
   }
   return undefined;
@@ -157,9 +165,18 @@ export function subagentSessionDir(parent: ParentContext): string {
   return join(dirname(parent.sessionFile!), "subagents", parent.sessionId);
 }
 
-export function sessionExists(dir: string, id: string): boolean {
-  if (!existsSync(dir)) return false;
-  return readdirSync(dir, { recursive: true }).some((f) => String(f).endsWith(`_${id}.jsonl`));
+// Written next to the child session on a first run, so a resume knows which agent it was.
+export function agentMetaFile(parent: ParentContext, agentId: string): string {
+  return join(subagentSessionDir(parent), `${agentId}.json`);
+}
+
+// The agentType a resumable run was started with. Throws for anything that cannot be resumed.
+export function storedAgentType(parent: ParentContext, resume: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(resume)) throw new Error(`invalid resume id "${resume}"`);
+  if (!parent.sessionFile) throw new Error("resume needs a persisted parent session");
+  const file = agentMetaFile(parent, resume);
+  if (!existsSync(file)) throw new Error(`no subagent session "${resume}" to resume`);
+  return (JSON.parse(readFileSync(file, "utf8")) as { agentType: string }).agentType;
 }
 
 export function newAgentId(): string {
@@ -179,19 +196,9 @@ export function resolveChild(
   const tools = resolveTools(def, config);
   const system = buildSystemPrompt(def, parent.cwd, now);
 
-  let agentId: string;
-  let session: string[];
-  if (input.resume !== undefined) {
-    if (!/^[A-Za-z0-9._-]+$/.test(input.resume)) throw new Error(`invalid resume id "${input.resume}"`);
-    if (!parent.sessionFile) throw new Error("resume needs a persisted parent session");
-    const dir = subagentSessionDir(parent);
-    if (!sessionExists(dir, input.resume)) throw new Error(`no subagent session "${input.resume}" to resume`);
-    agentId = input.resume;
-    session = ["--session-dir", dir, "--session-id", agentId];
-  } else {
-    agentId = newAgentId();
-    session = parent.sessionFile ? ["--session-dir", subagentSessionDir(parent), "--session-id", agentId] : ["--no-session"];
-  }
+  // A resume id was already checked by storedAgentType().
+  const agentId = input.resume ?? newAgentId();
+  const session = parent.sessionFile ? ["--session-dir", subagentSessionDir(parent), "--session-id", agentId] : ["--no-session"];
 
   const args = [
     "--mode", "json", "-p",
