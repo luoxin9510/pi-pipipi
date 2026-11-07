@@ -4,12 +4,12 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** closed (done 2026-11-07)
 
-- [ ] Precedence across the five sources; folders are scanned recursively; the repo root bounds the walk; without a repo only cwd is scanned
-- [ ] Every skip reason from the spec produces a warning naming the file and the reason; comma and list forms of `tools` both work
-- [ ] Unsupported Claude Code fields produce a "has no effect" warning; other unknown keys are ignored
-- [ ] Two files with the same name in one folder: the first in sorted path order wins, with a warning
-- [ ] A user file overrides a built-in of the same name; definitions are re-read on every call
-- [ ] The code-reviewer example from the Claude Code docs loads with no warnings
-- [ ] An unknown `subagent_type` throws and lists the available agents
+- [x] Precedence across the five sources; folders are scanned recursively; the repo root bounds the walk; without a repo only cwd is scanned
+- [x] Every skip reason from the spec produces a warning naming the file and the reason; comma and list forms of `tools` both work
+- [x] Unsupported Claude Code fields produce a "has no effect" warning; other unknown keys are ignored
+- [x] Two files with the same name in one folder: the first in sorted path order wins, with a warning
+- [x] A user file overrides a built-in of the same name; definitions are re-read on every call
+- [x] The code-reviewer example from the Claude Code docs loads with no warnings
+- [x] An unknown `subagent_type` throws and lists the available agents

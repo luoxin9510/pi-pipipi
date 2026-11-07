@@ -4,10 +4,10 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** closed (done 2026-11-07)
 
-- [ ] With nothing set, the child runs `anthropic/claude-haiku-5-5`, never the parent model; built-in agents do too
-- [ ] Each alias maps to its default; a settings override changes only that alias; full ids pass through
-- [ ] `inherit` in the call, the definition or `defaultModel` uses the parent model; with no parent model it throws
-- [ ] Thinking: call `effort` > definition `effort` > parent thinking level
-- [ ] README has a "Model selection" section: order, alias table, inherit, and what to change without Anthropic credentials
+- [x] With nothing set, the child runs `anthropic/claude-haiku-5-5`, never the parent model; built-in agents do too
+- [x] Each alias maps to its default; a settings override changes only that alias; full ids pass through
+- [x] `inherit` in the call, the definition or `defaultModel` uses the parent model; with no parent model it throws
+- [x] Thinking: call `effort` > definition `effort` > parent thinking level
+- [x] README has a "Model selection" section: order, alias table, inherit, and what to change without Anthropic credentials

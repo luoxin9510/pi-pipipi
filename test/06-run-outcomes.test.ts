@@ -1,4 +1,4 @@
-// Runner behaviour, exercised through the Agent tool with fake pi.
+// Ticket 06: run outcomes: partial, failed, abort, long prompts.
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -92,4 +92,17 @@ test("14: abort kills the child and throws", async () => {
   setTimeout(() => ac.abort(), 300);
   await assert.rejects(t.run({}, ac.signal), /aborted/);
   assert.ok(Date.now() - started < 3000, "the child was stopped promptly");
+});
+
+test("a prompt over 100 KB reaches the child through a file; a leading dash is not a flag", async () => {
+  const s = sandbox();
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool({}, { cwd: s.repo });
+  const prompt = "x".repeat(150_000);
+  await t.run({ prompt });
+  const rec = s.record();
+  assert.match(rec.argv.at(-1)!, /^@.*prompt\.md$/);
+  assert.equal(rec.promptFile, prompt);
+  await t.run({ prompt: "-starts with a dash" });
+  assert.deepEqual(s.record().argv.slice(-2), ["--", "-starts with a dash"]);
 });

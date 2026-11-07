@@ -58,7 +58,7 @@ export function sandbox() {
     scenario(s: Scenario) {
       writeFileSync(scenarioFile, JSON.stringify(s));
     },
-    record(): { argv: string[]; depth?: string; cwd: string; systemPrompt?: string; promptFile?: string } {
+    record(): { argv: string[]; depth?: string; stdin: string; cwd: string; systemPrompt?: string; promptFile?: string } {
       return JSON.parse(readFileSync(recordFile, "utf8"));
     },
   };
@@ -112,3 +112,5 @@ export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
       tool.execute("call-1", { description: "test task", prompt: "do it", ...params }, signal, (u: any) => updates.push(u.content[0].text), ctx),
   };
 }
+
+export const flag = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);

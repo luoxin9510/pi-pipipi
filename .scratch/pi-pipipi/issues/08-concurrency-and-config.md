@@ -4,8 +4,8 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** closed (done 2026-11-07)
 
-- [ ] With `maxConcurrent: 2`, a third concurrent call waits for a free slot
-- [ ] A queued call that is aborted leaves the queue
-- [ ] Wrong types for `maxConcurrent`, `models`, `toolMap`, `defaultModel`, `piCommand` throw naming the key
+- [x] With `maxConcurrent: 2`, a third concurrent call waits for a free slot
+- [x] A queued call that is aborted leaves the queue
+- [x] Wrong types for `maxConcurrent`, `models`, `toolMap`, `defaultModel`, `piCommand` throw naming the key

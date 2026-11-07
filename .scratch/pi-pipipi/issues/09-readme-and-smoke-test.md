@@ -6,6 +6,10 @@
 
 **Status:** ready-for-human
 
-- [ ] Install, codemode requirement, usage example, field compatibility table, result shape, config
-- [ ] Notes: description snapshot until `/reload`, long prompts via file, children inherit trust, nesting is one level
+- [x] Install, codemode requirement, usage example, field compatibility table, result shape, config
+- [x] Notes: description snapshot until `/reload`, long prompts via file, children inherit trust, nesting is one level
 - [ ] Smoke test: two Explore agents in parallel, then a resume without `subagent_type`; the owner runs it and records the result
+
+## Comments
+
+- 2026-11-07 (agent): ran the README smoke command against pi 1.5.0 on the owner's machine: three `completed` results on `anthropic/claude-haiku-5-5`; the resumed Explore answered from its earlier turn; total ≈ $0.0011. Left `ready-for-human` for the owner's own run.

@@ -4,9 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** closed (done 2026-11-07)
 
-- [ ] First run: `--session-dir <parent dir>/subagents/<parent id> --session-id <agentId>` and `<agentId>.json` with the agent type
-- [ ] Resume without `subagent_type` reuses the stored type, agentId and session flags
-- [ ] Resume with a different `subagent_type`, an unknown id, or an invalid id throws
-- [ ] In-memory parent: children get `--no-session`, and resume throws
+- [x] First run: `--session-dir <parent dir>/subagents/<parent id> --session-id <agentId>` and `<agentId>.json` with the agent type
+- [x] Resume without `subagent_type` reuses the stored type, agentId and session flags
+- [x] Resume with a different `subagent_type`, an unknown id, or an invalid id throws
+- [x] In-memory parent: children get `--no-session`, and resume throws

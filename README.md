@@ -128,19 +128,27 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
 
 ```bash
 npm install
-npm test          # node:test against a fake pi binary (test/fake-pi.mjs)
-npx tsc -p .      # typecheck
+npm test            # node:test, one seam: the Agent tool driven through a fake pi binary (test/fake-pi.mjs)
+npm run typecheck
 ```
 
-Real-model smoke test (costs a few cents with haiku):
+Real-model smoke test (costs well under a cent with haiku). Run it from this repo:
 
 ```bash
-pi -e ./src/index.ts --model anthropic/claude-haiku-5-5 --tools +codemode -p \
-  'Use the codemode tool: run two Explore agents in parallel with tools.Agent, one asking which file registers the
-   Agent tool, one listing src/builtin. Return status, turns, usage.cost.total and output for each.'
+pi -e ./src/index.ts --tools +codemode -p 'Use the codemode tool. Script:
+const a = await tools.Agent({ description: "list builtins", prompt: "List file names in src/builtin. quick", subagent_type: "Explore" });
+const [b, c] = await Promise.all([
+  tools.Agent({ description: "follow up", prompt: "What was the first file name you listed? One word.", resume: a.agentId }),
+  tools.Agent({ description: "find tool", prompt: "Which file registers the Agent tool? quick", subagent_type: "Explore" }),
+]);
+return [a, b, c].map((r) => ({ status: r.status, agentType: r.agentType, model: r.model, cost: r.usage.cost.total, output: r.output.slice(0, 200), error: r.error }));
+Reply with the returned JSON only.'
 ```
 
-Design notes: `.scratch/pi-pipipi/` (decisions, spec, tickets, handoff).
+Expect three `completed` results on `anthropic/claude-haiku-5-5`, the second one an `Explore` answering from its
+earlier turn.
+
+Design notes and tickets: `.scratch/pi-pipipi/`.
 
 ## License
 

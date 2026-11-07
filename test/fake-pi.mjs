@@ -14,6 +14,8 @@ writeFileSync(
   JSON.stringify({
     argv,
     depth: process.env.PIPIPI_DEPTH,
+    // With stdin closed this reads EOF at once; an open pipe would block the run (and fail the test by timeout).
+    stdin: readFileSync(0, "utf8"),
     cwd: process.cwd(),
     systemPrompt: sp === -1 ? undefined : readFileSync(argv[sp + 1], "utf8"),
     promptFile: promptArg.startsWith("@") ? readFileSync(promptArg.slice(1), "utf8") : undefined,
