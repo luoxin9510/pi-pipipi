@@ -1,6 +1,6 @@
 # pi-pipipi: handoff
 
-Status as of 2026-11-07. Branch: `pipipi-v1` (built on `claude/exciting-tesla-w5876m`).
+Status as of 2026-11-07. v1 merged to `main` (PR #1, 646cc14).
 
 ## Done
 
@@ -28,5 +28,7 @@ moved to one seam, mutation-checked) -> code-review x2 (fixed) -> pr (PR #1 read
 
 ## Open
 
-- Owner: review and merge PR #1; run the README smoke test and close ticket 09.
+- Owner: run the README smoke test and close ticket 09.
+- Not done (owner decisions): usage of aborted runs is not reported; >100 KB prompts reach the child as a file attachment (unverified effect).
+- Not published to npm.
 - v2 candidates: tier B fields (mcpServers, worktree isolation, autoCompactWindow), background runs, nesting > 1.
