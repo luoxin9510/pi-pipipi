@@ -157,6 +157,69 @@ export function runParent(cwd: string, prompt: string, signal: AbortSignal, time
   });
 }
 
+export interface RpcEvent {
+  type: string;
+  at: number; // ms since the parent started
+  [k: string]: any;
+}
+
+export interface RpcParentRun {
+  events: RpcEvent[];
+  cost: number;
+  models: string[];
+  timedOut: boolean;
+}
+
+export const messageText = (m: any): string =>
+  typeof m?.content === "string" ? m.content : (m?.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
+
+// Like runParent, but a long-lived `pi --mode rpc` parent, so background work can outlive main's first turn (print
+// mode exits when the turn ends). Sends one prompt and collects events until `done(events)` or the timeout; then kills pi.
+export function runRpcParent(cwd: string, prompt: string, done: (events: RpcEvent[]) => boolean, signal: AbortSignal, timeoutMs = 240_000): Promise<RpcParentRun> {
+  mkdirSync(join(cwd, ".pi"), { recursive: true });
+  writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify(PINNED));
+  const sessionDir = mkdtempSync(join(tmpdir(), "pipipi-eval-parent-"));
+  const args = [
+    "--mode", "rpc", "--model", HAIKU, "--thinking", "low", "--approve",
+    "--no-extensions", "-e", "builtin:codemode", "-e", join(ROOT, "src", "index.ts"),
+    "--tools", "+codemode", "--session-dir", sessionDir,
+  ];
+  return new Promise((resolveRun) => {
+    const child = spawn(process.env.PIPIPI_TEST_PI ?? "pi", args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const t0 = Date.now();
+    const events: RpcEvent[] = [];
+    let buffer = "";
+    let timedOut = false;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      finish();
+    }, timeoutMs);
+    signal.addEventListener("abort", finish, { once: true });
+    child.stderr.on("data", () => {});
+    child.stdout.on("data", (c: Buffer) => {
+      buffer += c.toString("utf8");
+      for (let i = buffer.indexOf("\n"); i >= 0; i = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, i);
+        buffer = buffer.slice(i + 1);
+        if (line.startsWith("{")) events.push({ ...JSON.parse(line), at: Date.now() - t0 });
+      }
+      if (!finished && done(events)) finish();
+    });
+    child.on("close", () => {
+      finish();
+      resolveRun({ events, timedOut, ...sessionUsage(sessionDir) });
+    });
+    child.stdin.write(`${JSON.stringify({ type: "prompt", message: prompt })}\n`);
+  });
+}
+
 // Cost and models of every assistant message in every session file below a directory.
 export function sessionUsage(dir: string): { cost: number; models: string[] } {
   let cost = 0;

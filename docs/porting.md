@@ -15,7 +15,7 @@ If your agent still loads pi extensions and still has pi's CLI, you may need no 
 | 1. Child process (CLI + rpc) | everything: each subagent is a child process | `src/resolve.ts`, `src/runner.ts` |
 | 2. Session files | resume, `/subagents` after reload, the transcript on the subagent screen | `src/sessions.ts`, `src/registry.ts`, `src/subagent-screen.ts` |
 | 3. Extension API (parent) | the `Agent` tool, config, the note to main | `src/index.ts`, `src/agent-tool.ts`, `src/config.ts` |
-| 4. Codemode | calling `Agent` from scripts; codemode-only children | `src/agent-tool.ts`, `src/child-codemode.ts`, `src/resolve.ts` |
+| 4. Codemode | calling `Agent` from scripts; codemode-only children; background scripts | `src/agent-tool.ts`, `src/child-codemode.ts`, `src/resolve.ts`, `src/background.ts` |
 | 5. TUI | the panel, the subagent screen, `/subagents`, `/model` picker | `src/panel.ts`, `src/subagent-screen.ts`, `src/subagents-command.ts`, `src/live.ts` |
 
 Layers 1-4 are the `Agent` tool. Layer 5 is only the UI: without it (a headless or web front end) the tool works and
@@ -132,7 +132,11 @@ under other names, replace the import paths (`grep -rn "@earendil-works" src`), 
   the original `ctx` (`ctx.executeTool`) after the call and main's turn have ended. It relies on: nested tool call ids
   `<codemode call id>/<n>` (the owner of an `Agent` call is found by that prefix), `ctx.executeTool` working after the
   tool call returned, and `pi.sendMessage(msg, { triggerTurn: true })` starting a run when main is idle (`{ deliverAs: "steer" }`
-  when it runs). `run_in_background: true` agents run detached from the call's signal and report with the same `sendMessage` delivery. Without them, no background scripts (the planned `pipipi.backgroundScripts: false` is v2 behaviour).
+  when it runs). `run_in_background: true` agents run detached from the call's signal and report with the same `sendMessage` delivery. Without them, no background scripts: set `pipipi.backgroundScripts: false` and pi's own codemode runs unwrapped (v2 behaviour).
+  Also needed: `createCodemodeExtension` exported from the package index (the wrapper cannot be built without it) and
+  `ctx.ui.onTerminalInput` for ctrl+b (see layer 5; without a TUI, scripts move to the background only by starting an `Agent`).
+  Esc aborts main's signal: the wrapper links it to the script only while the script is in the foreground, so background
+  scripts survive it. Session shutdown stops every script and detached agent.
 - With codemode-only, an agent's `tools` list must also bind inside scripts. On pi 1.5.0 it does (a script calling a
   tool outside `--tools` gets "does not exist"). Check yours with `test/real/09-codemode-only.test.ts`.
 
@@ -143,9 +147,9 @@ Only needed for the panel and the subagent screen.
 | API | Where | Notes |
 |---|---|---|
 | `ctx.ui.setWidget(key, (tui, theme) => Component, { placement: "belowEditor" })`; `tui.requestRender()` | the panel | components implement `render(width)` and `invalidate()` |
-| `ctx.ui.onTerminalInput(handler)` returning `{ consume: true }` | ↓ into the panel, panel keys | the handler gets raw input including kitty key **releases**; pi-pipipi ignores them with pi-tui's `isKeyRelease`. If your terminal layer sends other event encodings, check `handleKey` in `src/panel.ts` |
+| `ctx.ui.onTerminalInput(handler)` returning `{ consume: true }` | ↓ into the panel, panel keys, ctrl+b (`scripts.backgroundAll`; passes through as cursor-left when the editor has text or no script runs) | the handler gets raw input including kitty key **releases**; pi-pipipi ignores them with pi-tui's `isKeyRelease`. If your terminal layer sends other event encodings, check `handleKey` in `src/panel.ts` |
 | `tui.focusedComponent` (not public API) | the panel acts only while the editor (a component with `getText`) has focus | if your TUI renames it, the panel may steal keys from pickers: fix `focusedIsEditor` in `src/panel.ts` |
-| `ctx.ui.getEditorText()` | ↓ only on an empty editor | |
+| `ctx.ui.getEditorText()` | ↓ only on an empty editor; ctrl+b moves foreground scripts to the background only when the editor is empty | |
 | `ctx.ui.custom(factory, { overlay: true, overlayOptions })`, full width and height; `tui.terminal.rows` | the subagent screen (it draws exactly the terminal's rows; its commands: `/main`, `/model`, `/stop`) | must not stop main's run; pi's `switchSession` would, so it is not used. The screen is `Focusable` and gets keys through `handleInput` (pi filters key releases for components) |
 | `ctx.ui.select`, `ctx.ui.notify` | `/subagents`, notices | |
 | pi components `AssistantMessageComponent`, `UserMessageComponent`, `ToolExecutionComponent`, `getMarkdownTheme`; pi-tui `Input`, `Text`, the `TUI`, `Component` and `Focusable` types, `matchesKey`, `isKeyRelease`, `truncateToWidth` | the transcript, the screen, the panel | |
@@ -179,6 +183,7 @@ npm install
 npm run typecheck
 npm run test:faults                                   # runner logic against a scripted fake pi; no model, no binary
 npm run test:panel                                    # panel and screen logic; no model, no binary
+PIPIPI_TEST_PI=/path/to/your-agent npm run test:parent # the codemode wrapper and background scripts in a real parent (needs haiku)
 PIPIPI_TEST_PI=/path/to/your-agent npm run test:real  # real children on your binary (needs Anthropic haiku)
 PIPIPI_TEST_PI=/path/to/your-agent npm run test:tui   # your binary's interactive TUI in a pty
 PIPIPI_TEST_PI=/path/to/your-agent npm run eval       # real-model evals (parent and children on your binary)
@@ -194,8 +199,8 @@ Read failures by layer:
 |---|---|
 | 1. Child process | `test/real/01-tracer-bullet`, `02-agent-files`, `03-model-selection`, `04-tools-and-flags` (flags such as `--tools`, `--exclude-tools`, `--no-context-files`), `05-skills`, `06-run-outcomes`, `08-concurrency-and-config`, `11-talk` (steer), `12-stop-and-model` (abort, set_model); `test/faults/` (stream handling) |
 | 2. Session files | `test/real/07-sessions-and-resume`, `10-registry` |
-| 4. Codemode | `test/real/09-codemode-only` |
-| 5. TUI | `test/panel/` (no pi), `test/tui/05-panel`, `06-screen`, `07-talk`, `08-stop-model`, `09-streaming` |
+| 4. Codemode | `test/real/09-codemode-only`; `test/parent/` (a real parent `pi --mode rpc` with the wrapper: `01-background-script` early return, new turn from the result message and nested ids; `02-run-in-background` `false`/`true`; `03-edges` errors, long results, steer delivery, stop, shutdown) |
+| 5. TUI | `test/panel/` (no pi; `scripts.test.ts` for script rows and `x`), `test/tui/05-panel`, `06-screen`, `07-talk`, `08-stop-model`, `09-streaming`, `10-script-panel` (script rows, `x`, ctrl+b) |
 
 Quick manual check that a binary speaks the rpc protocol (one haiku call):
 

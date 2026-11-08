@@ -200,6 +200,37 @@ subagent is not lost: main can resume it with `resume`, or you can type to it.
 kept in its meta file for later exchanges. The agent definition file is not touched. Only models pi lists as available
 are accepted.
 
+## Background work
+
+Delegating does not block main. When a codemode script starts an `Agent`, the whole script moves to the background:
+the `codemode` call returns to main at once ("Script moved to the background (id S1) ..."), main's turn can end, and
+you can keep talking to main. The script keeps running and keeps orchestrating (`await tools.Agent(...)` still returns
+the full result, so it can filter and combine). When it ends, main gets a message with the script's return value, its
+error if it threw, and the agents it ran (id, type, status, cost). If main is idle the message starts a new turn; if
+main is running it arrives as a steer. A return value over 8 KB is cut in the message and the full text is written to
+a file whose path the message gives (in the parent session's `subagents/<session id>/` directory).
+
+| `run_in_background` on an `Agent` call | Effect |
+|---|---|
+| omitted | the first call moves its script to the background |
+| `false` | the script stays in the foreground (and is pinned there for its later calls), so main can use the result in the same turn |
+| `true` | the call returns `status: "running"` with its `agentId` at once and the script is not moved; main gets a message when that agent ends |
+
+**ctrl+b** moves a running foreground script to the background (for example a slow script that starts no agent). It
+works only when the editor is empty; with text in the editor, or with no script running, ctrl+b stays cursor-left.
+
+**Panel.** Each background script is a row (`S1`, state, agents running, elapsed, cost) with its agents indented below.
+Finished rows linger like agent rows. `x` on a script row stops the script and all its agents (their calls return
+`failed` / "stopped by user"; main gets the usual end message with the state `stopped`). `x` on an agent row stops only
+that agent, and the script carries on. Several scripts can run at once; their agents share the `maxConcurrent` limit.
+
+**Esc** aborts main's turn. It stops a script that is still in the foreground, as before, and leaves background scripts
+running. **Ending the session** (quit, reload, `/new`, resume) stops every background script and detached agent; the
+agents are marked stopped and stay resumable.
+
+`pipipi.backgroundScripts: false` turns all of this off: pi's own `codemode` tool runs unwrapped and a script that
+starts an agent waits for it, as in v2. Your `codemode` settings (`mode`, `inlineBudget`) are unaffected either way.
+
 ## Codemode-only children
 
 By default a child sees only the `codemode` tool (pi's `codemode` extension in `only` mode, added with `-e`) and calls
@@ -255,11 +286,12 @@ npm test            # real suite (test/real) + fault suite (test/faults)
 npm run test:real   # only the real suite
 npm run test:faults # only the fault suite: scripted fake pi (test/fake-pi.mjs), no model, free
 npm run test:panel  # panel rows, focus rules and screen rendering against the registry: no pi, no model, free
+npm run test:parent # a real parent pi (rpc) with the codemode wrapper: background scripts, real haiku
 npm run test:tui    # drives real interactive pi in a pty (node-pty + headless xterm), real haiku
 npm run typecheck
 ```
 
-`npm test` runs all four suites (`test/real`, `test/faults`, `test/panel`, `test/tui`). The `test/tui` tests start the
+`npm test` runs all five suites (`test/real`, `test/faults`, `test/panel`, `test/tui`, `test/parent`). The `test/tui` tests start the
 real `pi` with this checkout loaded and read its screen, so they are slow (about 25 to 30 s each) and each costs about a
 cent. Never run `npm test` from inside a test.
 
@@ -267,8 +299,8 @@ The real suite drives the Agent tool in-process with real children: the pinned p
 real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 110 tests (70 real, 18
-fault, 14 panel, 8 tui) in 40 s to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
+read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 139 tests (70 real, 28
+fault, 19 panel, 11 tui, 11 parent) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
 (measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
 `usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
@@ -298,16 +330,19 @@ npm run eval -- --runs 3           # repeat, for pass rates
 npm run eval -- --only resume      # cases whose name contains "resume"
 ```
 
-`evals/cases.ts` holds 14 cases. Twelve call the tool in-process with real `pi` children (listing, read-only agents
+`evals/cases.ts` holds 15 cases. Twelve call the tool in-process with real `pi` children (listing, read-only agents
 cannot write, custom agent tools, resume, `maxTurns`, skills, context files vs `omitClaudeMd`, model aliases, a bad
-model, no nesting, parallel runs, and a steer that changes a running subagent's course, sent through the registry handle and graded by an exact token and a file that must not appear). Two start a real parent `pi` on haiku with codemode and this checkout
-(`--no-extensions -e builtin:codemode -e ./src/index.ts`), one with a given script and one where the model decides to
-delegate. Cases are graded from the structured result and side effects. `defaultModel` is pinned to `haiku` whatever
+model, no nesting, parallel runs, and a steer that changes a running subagent's course, sent through the registry handle and graded by an exact token and a file that must not appear). Three start a real parent `pi` on haiku with codemode and this checkout
+(`--no-extensions -e builtin:codemode -e ./src/index.ts`): one with a given script and one where the model decides to
+delegate (both pass `run_in_background: false`, since print mode would exit before a background result arrived), and one
+background case that runs a long-lived `pi --mode rpc` parent: the script's `codemode` call must return "moved to the
+background", main's turn must end while the agent still runs, the result message must start a new turn, and main's final
+answer must contain the token the script computed. Cases are graded from the structured result and side effects. `defaultModel` is pinned to `haiku` whatever
 your settings say, and every case checks that every result (or, for the parent cases, every assistant message of the
 parent and its children) ran on haiku. A case running over 5 minutes is aborted and its children stopped. Results go
 to `evals/results/` (ignored by git).
 
-Children are `pi --mode rpc` and codemode-only by default. Last run (pi 1.5.0, v2): 39/39 over 3 runs for the 13 original cases, $0.027 in all; the steer case passed 11/13 over two batches (the miss: haiku batched both steps into one codemode script, so there was nothing left to steer; $0.0005 per run). The first version of the suite found a bug that the fake-pi
+Children are `pi --mode rpc` and codemode-only by default. Last run (pi 1.5.0, v3a, `--runs 3`): 45/45 over all 15 cases, $0.029 in all, 80 s wall; the background case 3/3 at $0.001 and about 14 s per run. Earlier (v2): 39/39 over 3 runs for the 13 original cases, $0.027 in all; the steer case passed 11/13 over two batches (the miss: haiku batched both steps into one codemode script, so there was nothing left to steer; $0.0005 per run). The first version of the suite found a bug that the fake-pi
 tests had missed (a run could go past `maxTurns` and still be reported `completed`), fixed since. Two checks depend on
 the model or on timing and could fail without a bug: `maxTurns` needs haiku to call a tool on its first turn, and the
 parallel case needs wall time under 0.7 × the summed run times.
