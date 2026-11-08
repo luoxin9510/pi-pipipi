@@ -1,9 +1,10 @@
-// Ticket 06: run outcomes: partial, failed, abort, long prompts.
+// Faults only a scripted stream can produce on demand (fake pi, no model): bad stream records, crashes with stderr,
+// provider-error retry sequences, children that never settle or never exit, exact usage and turn arithmetic.
+// Everything real pi can show lives in test/real/.
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentFile, ev, happyLines, loadTool, sandbox, usage } from "./helpers.ts";
+import { agentFile, ev, happyLines, loadTool, sandbox, usage } from "../helpers.ts";
 
 test("10: completed run: output is the last assistant text, usage summed, turns counted", async () => {
   const s = sandbox();
@@ -43,17 +44,6 @@ test("11: maxTurns stops the child and returns partial", async () => {
   assert.equal(r.status, "partial");
   assert.equal(r.turns, 2);
   assert.equal(r.output, "turn 2");
-});
-
-test("maxTurns reached on the last turn of a run that settles on its own is completed", async () => {
-  const s = sandbox();
-  s.write(join(s.repo, ".pi/agents/one.md"), agentFile("name: one\ndescription: d\nmaxTurns: 1"));
-  s.scenario({ lines: happyLines("single turn") });
-  const t = await loadTool({}, { cwd: s.repo });
-  const r = (await t.run({ subagent_type: "one" })).structuredContent;
-  assert.equal(r.status, "completed");
-  assert.equal(r.output, "single turn");
-  assert.equal(r.turns, 1);
 });
 
 test("after maxTurns, output of further turns is ignored when the run still settles", async () => {
@@ -117,15 +107,6 @@ test("12a: agent_settled with aborted: true -> failed with a clear error", async
   assert.equal(r.error, "child run was aborted");
 });
 
-test("12b: a missing pi binary fails the run", async () => {
-  const s = sandbox();
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({ piCommand: join(s.root, "no-such-pi") }, { cwd: s.repo });
-  const r = (await t.run({})).structuredContent;
-  assert.equal(r.status, "failed");
-  assert.match(r.error, /could not start/);
-});
-
 test("13: U+2028 inside a JSON string does not split a record", async () => {
   const s = sandbox();
   const text = "line one line two end";
@@ -134,30 +115,6 @@ test("13: U+2028 inside a JSON string does not split a record", async () => {
   const r = (await t.run({})).structuredContent;
   assert.equal(r.status, "completed");
   assert.equal(r.output, text);
-});
-
-test("14: abort kills the child and throws", async () => {
-  const s = sandbox();
-  s.scenario({ lines: [ev.session(), ev.assistant("working"), ev.turnEnd()], hang: true });
-  const t = await loadTool({}, { cwd: s.repo });
-  const ac = new AbortController();
-  const started = Date.now();
-  setTimeout(() => ac.abort(), 300);
-  await assert.rejects(t.run({}, ac.signal), /aborted/);
-  assert.ok(Date.now() - started < 3000, "the child was stopped promptly");
-});
-
-test("a prompt over 100 KB reaches the child through a file; a leading dash is not a flag", async () => {
-  const s = sandbox();
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: s.repo });
-  const prompt = "x".repeat(150_000);
-  await t.run({ prompt });
-  const rec = s.record();
-  assert.match(rec.argv.at(-1)!, /^@.*prompt\.md$/);
-  assert.equal(rec.promptFile, prompt);
-  await t.run({ prompt: "-starts with a dash" });
-  assert.deepEqual(s.record().argv.slice(-2), ["--", "-starts with a dash"]);
 });
 
 test("auto-retry: the outcome of the LAST assistant message decides, an earlier provider error is cleared", async () => {
@@ -181,16 +138,6 @@ test("auto-retry: the outcome of the LAST assistant message decides, an earlier 
   assert.equal(r.status, "completed");
   assert.equal(r.output, "the real answer");
   assert.equal(r.error, undefined);
-});
-
-test("a prompt starting with @ is prefixed with a newline so pi reads it as text", async () => {
-  const s = sandbox();
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: s.repo });
-  await t.run({ prompt: "@alice summarize this" });
-  const rec = s.record();
-  assert.equal(rec.argv.at(-1), "\n@alice summarize this");
-  assert.equal(rec.promptFile, undefined);
 });
 
 const failedTurn = [
@@ -263,21 +210,3 @@ test("malformed records fail the run with the bad line named instead of throwing
   }
 });
 
-test("a prompt that makes spawn throw synchronously fails the run and removes the temp dir", async () => {
-  const s = sandbox();
-  s.scenario({ lines: happyLines() });
-  const tmp = join(s.root, "tmp");
-  mkdirSync(tmp);
-  const oldTmp = process.env.TMPDIR;
-  process.env.TMPDIR = tmp;
-  try {
-    const t = await loadTool({}, { cwd: s.repo });
-    const res = await t.run({ prompt: "nul \0 byte" });
-    assert.equal(res.structuredContent.status, "failed");
-    assert.match(res.structuredContent.error, /could not start .*NUL|could not start .*null/i);
-    assert.deepEqual(readdirSync(tmp), []);
-  } finally {
-    if (oldTmp === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = oldTmp;
-  }
-});

@@ -132,9 +132,20 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
 
 ```bash
 npm install
-npm test            # node:test, one seam: the Agent tool driven through a fake pi binary (test/fake-pi.mjs)
+npm test            # real suite (test/real) + fault suite (test/faults)
+npm run test:real   # only the real suite
+npm run test:faults # only the fault suite: scripted fake pi (test/fake-pi.mjs), no model, free
 npm run typecheck
 ```
+
+The real suite drives the Agent tool in-process with real children: the pinned pi (`node_modules/.bin/pi`, 1.5.0) on
+real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`. Each test gets a temp repo, a temp
+HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
+read structure and side effects (the child's session file, files it wrote), never wording. One full `npm test` runs
+54 real and 13 fault tests in about 35 s and costs about $0.01 (measured with `PIPIPI_COST_LOG=<file> npm test`,
+which makes each test file append its sum of `usage.cost.total`). The fault suite covers what real pi will not do on
+demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
+settles or never exits, exact usage arithmetic.
 
 Real-model smoke test (costs well under a cent with haiku). Run it from this repo:
 

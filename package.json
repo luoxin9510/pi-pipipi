@@ -25,7 +25,9 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types 'test/**/*.test.ts'",
+    "test": "node --test --experimental-strip-types 'test/real/*.test.ts' 'test/faults/*.test.ts'",
+    "test:real": "node --test --experimental-strip-types 'test/real/*.test.ts'",
+    "test:faults": "node --test --experimental-strip-types 'test/faults/*.test.ts'",
     "typecheck": "tsc -p .",
     "eval": "node --experimental-strip-types evals/run.ts",
     "stress": "node --experimental-strip-types stress/stress.ts"

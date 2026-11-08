@@ -1,9 +1,10 @@
-// Ticket 02: load Claude Code agent files.
+// Ticket 02: load Claude Code agent files. Discovery tests need no child; the ones that show what a child received
+// read it from the session pi wrote.
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentFile, flag, happyLines, loadTool, sandbox } from "./helpers.ts";
+import { agentFile, childSetup, loadTool, REPLY_OK, sandbox } from "./helpers.ts";
 
 const def = (name: string, desc: string, body = `Prompt of ${name} (${desc}).`) => agentFile(`name: ${name}\ndescription: ${desc}`, body);
 
@@ -23,19 +24,23 @@ test("precedence across the five sources, closest project dir first, recursive s
   s.write(join(s.home, ".claude/agents/d.md"), def("d", "home-claude"));
   s.write(join(s.home, ".claude/agents/Explore.md"), def("Explore", "mine"));
   s.write(join(s.root, ".pi/agents/outside.md"), def("outside", "beyond the repo root"));
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: sub });
+  const t = await loadTool({}, { cwd: sub, persist: join(s.root, "sessions") });
 
-  const ranWith = async (name: string) => {
-    await t.run({ subagent_type: name });
-    return s.record().systemPrompt!.split("\n")[0];
+  const want: Record<string, string> = {
+    a: "Prompt of a (sub-pi).",
+    b: "Prompt of b (root-claude).",
+    c: "Prompt of c (home-pi).",
+    d: "Prompt of d (home-claude).",
+    Explore: "Prompt of Explore (mine).", // a user file overrides a built-in
   };
-  assert.equal(await ranWith("a"), "Prompt of a (sub-pi).");
-  assert.equal(await ranWith("b"), "Prompt of b (root-claude).");
-  assert.equal(await ranWith("c"), "Prompt of c (home-pi).");
-  assert.equal(await ranWith("d"), "Prompt of d (home-claude).");
-  assert.equal(await ranWith("Explore"), "Prompt of Explore (mine).", "a user file overrides a built-in");
-  assert.match(await ranWith("Plan"), /software architect/, "built-in Plan");
+  const names = [...Object.keys(want), "Plan"];
+  const results = await Promise.all(names.map((n) => t.result({ subagent_type: n, prompt: REPLY_OK })));
+  results.forEach((r, i) => {
+    assert.equal(r.status, "completed", `${names[i]}: ${r.error}`);
+    const prompt = childSetup(t.sessionDir!, r.agentId).prompt;
+    if (want[names[i]!]) assert.ok(prompt.startsWith(want[names[i]!]!), `${names[i]}: ${prompt.slice(0, 80)}`);
+    else assert.match(prompt, /software architect/, "built-in Plan");
+  });
   await assert.rejects(t.run({ subagent_type: "outside" }), /unknown subagent_type "outside"\. Available: .*general-purpose/);
 
   assert.match(t.tool.description, /- a: sub-pi\n/);
@@ -55,14 +60,13 @@ test("without a repo only cwd is scanned", async () => {
 
 test("definitions are re-read on every call", async () => {
   const s = sandbox();
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: s.repo });
+  const t = await loadTool({}, { cwd: s.repo, persist: join(s.root, "sessions") });
   s.write(join(s.repo, ".pi/agents/late.md"), def("late", "added after session start", "Version 1."));
-  await t.run({ subagent_type: "late" });
-  assert.match(s.record().systemPrompt!, /^Version 1\./);
+  const one = await t.result({ subagent_type: "late", prompt: REPLY_OK });
+  assert.ok(childSetup(t.sessionDir!, one.agentId).prompt.startsWith("Version 1."));
   s.write(join(s.repo, ".pi/agents/late.md"), def("late", "edited", "Version 2."));
-  await t.run({ subagent_type: "late" });
-  assert.match(s.record().systemPrompt!, /^Version 2\./);
+  const two = await t.result({ subagent_type: "late", prompt: REPLY_OK });
+  assert.ok(childSetup(t.sessionDir!, two.agentId).prompt.startsWith("Version 2."));
 });
 
 test("every skip reason is reported at session start, naming the file", async () => {
@@ -100,14 +104,14 @@ test("unsupported Claude Code fields warn; unknown keys are ignored; same-folder
   s.write(join(s.repo, ".pi/agents/inert.md"), agentFile("name: inert\ndescription: d\ncolor: blue\nhooks: {}\nwhatever: 1"));
   s.write(join(s.home, ".claude/agents/x1.md"), def("dup", "first"));
   s.write(join(s.home, ".claude/agents/x2.md"), def("dup", "second"));
-  s.scenario({ lines: happyLines() });
   const t = await loadTool({}, { cwd: s.repo });
   assert.ok(t.notes.includes('pi-pipipi: inert: field "color" has no effect in pi-pipipi'));
   assert.ok(t.notes.includes('pi-pipipi: inert: field "hooks" has no effect in pi-pipipi'));
   assert.ok(!t.notes.some((n) => n.includes("whatever")));
   assert.ok(t.notes.some((n) => /dup" is defined twice: .*x1\.md wins over .*x2\.md/.test(n)));
   assert.match(t.tool.description, /- dup: first/);
-  const r = (await t.run({ subagent_type: "inert" })).structuredContent;
+  const r = await t.result({ subagent_type: "inert", prompt: REPLY_OK });
+  assert.equal(r.status, "completed", r.error ?? "");
   assert.deepEqual(r.warnings, ['field "color" has no effect in pi-pipipi', 'field "hooks" has no effect in pi-pipipi']);
 });
 
@@ -116,23 +120,28 @@ test("every supported field of a Claude Code file reaches the child; comma and l
   s.write(
     join(s.repo, ".claude/agents/full.md"),
     agentFile(
-      ["name: full", "description: All fields", "tools: Read, Grep,Glob", "disallowedTools:", "  - Write", "model: sonnet", "effort: high", "omitClaudeMd: true"].join("\n"),
+      ["name: full", "description: All fields", "tools: Read, Grep,Glob", "disallowedTools:", "  - Grep", "model: haiku", "effort: high", "omitClaudeMd: true"].join("\n"),
       "\nBody line 1\nBody line 2\n",
     ),
   );
   s.write(join(s.repo, ".claude/agents/listed.md"), agentFile("name: listed\ndescription: d\ntools:\n  - Read\n  - Bash"));
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: s.repo });
-  await t.run({ subagent_type: "full" });
-  const rec = s.record();
-  assert.equal(flag(rec.argv, "--tools"), "read,grep,find");
-  assert.equal(flag(rec.argv, "--exclude-tools"), "write");
-  assert.equal(flag(rec.argv, "--model"), "anthropic/claude-sonnet-5-5");
-  assert.equal(flag(rec.argv, "--thinking"), "high");
-  assert.ok(rec.argv.includes("--no-context-files"));
-  assert.match(rec.systemPrompt!, /^Body line 1\nBody line 2\n\n# Environment/);
-  await t.run({ subagent_type: "listed" });
-  assert.equal(flag(s.record().argv, "--tools"), "read,bash");
+  s.write(join(s.repo, "AGENTS.md"), "Project context file.\n");
+  const t = await loadTool({}, { cwd: s.repo, persist: join(s.root, "sessions") });
+  const [full, listed] = await Promise.all([
+    t.result({ subagent_type: "full", prompt: REPLY_OK }),
+    t.result({ subagent_type: "listed", prompt: REPLY_OK }),
+  ]);
+  assert.equal(full.status, "completed", full.error ?? "");
+  const f = childSetup(t.sessionDir!, full.agentId);
+  assert.deepEqual(f.tools, ["find", "read"], "tools list minus disallowedTools");
+  assert.equal(f.model, "anthropic/claude-haiku-5-5");
+  assert.equal(f.thinking, "high");
+  assert.equal(f.hasContextFiles, false, "omitClaudeMd");
+  assert.match(f.prompt, /^Body line 1\nBody line 2\n\n# Environment/);
+  assert.equal(listed.status, "completed", listed.error ?? "");
+  const l = childSetup(t.sessionDir!, listed.agentId);
+  assert.deepEqual(l.tools, ["bash", "read"]);
+  assert.equal(l.hasContextFiles, true, "context files are kept by default");
 });
 
 test("the code-reviewer example from the Claude Code docs loads unchanged", async () => {
@@ -154,15 +163,14 @@ When invoked:
 3. Begin review immediately
 `,
   );
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: s.repo });
+  const t = await loadTool({}, { cwd: s.repo, persist: join(s.root, "sessions") });
   assert.deepEqual(t.notes, []);
-  const r = (await t.run({ subagent_type: "code-reviewer" })).structuredContent;
-  assert.equal(r.status, "completed");
+  const r = await t.result({ subagent_type: "code-reviewer", prompt: REPLY_OK });
+  assert.equal(r.status, "completed", r.error ?? "");
   assert.deepEqual(r.warnings, []);
-  const rec = s.record();
-  assert.equal(flag(rec.argv, "--tools"), "read,grep,find,bash");
-  assert.match(rec.systemPrompt!, /^You are a senior code reviewer/);
+  const c = childSetup(t.sessionDir!, r.agentId);
+  assert.deepEqual(c.tools, ["bash", "find", "grep", "read"]);
+  assert.match(c.prompt, /^You are a senior code reviewer/);
 });
 
 test("an unreadable directory inside an agents folder is skipped with a warning", async () => {
@@ -214,7 +222,6 @@ test("a self-referencing symlink in an agents folder warns and the other agents 
   const agents = join(s.repo, ".claude/agents");
   s.write(join(agents, "ok.md"), def("ok", "fine"));
   symlinkSync("loop", join(agents, "loop"));
-  s.scenario({ lines: happyLines() });
   const t = await loadTool({}, { cwd: s.repo });
   assert.ok(t.registered);
   assert.match(t.tool.description, /- ok: fine/);
