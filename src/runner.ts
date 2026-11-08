@@ -75,7 +75,9 @@ interface AssistantMessage {
 // it can steer, abort or switch the model of a running child.
 export interface ChildHandle {
   // false when the child can no longer take commands (its run settled, or it exited)
-  send(command: { type: "steer"; message: string } | { type: "abort" } | { type: "set_model"; provider: string; modelId: string }): boolean;
+  send(command: { type: "steer"; message: string } | { type: "abort" }): boolean;
+  // set_model, with pi's answer: undefined when the model was switched, else why not
+  setModel(provider: string, modelId: string): Promise<string | undefined>;
 }
 
 export function runChild(
@@ -111,6 +113,7 @@ export function runChild(
       child.stdin.write(`${JSON.stringify(command)}\n`);
     };
     const PROMPT_ID = "pipipi-prompt";
+    const requests = new Map<string, (error: string | undefined) => void>(); // commands waiting for pi's response
 
     const usage = emptyUsage();
     let output = "";
@@ -164,6 +167,11 @@ export function runChild(
         // rpc has no session header. Responses to our commands: only a failed prompt matters (steer and abort
         // failures surface as the run going on or not settling).
         if (event.type === "response") {
+          const answer = requests.get(event.id as string);
+          if (answer) {
+            requests.delete(event.id as string);
+            answer(event.success === true ? undefined : ((event.error as string | undefined) ?? "pi refused"));
+          }
           if (event.id === PROMPT_ID && event.success !== true) {
             promptError = (event.error as string | undefined) ?? "pi rejected the prompt";
             stopChild();
@@ -255,6 +263,8 @@ export function runChild(
       if (graceTimer) clearTimeout(graceTimer);
       signal?.removeEventListener("abort", onAbort);
       rmSync(tmp, { recursive: true, force: true });
+      for (const answer of requests.values()) answer("the subagent is not running");
+      requests.clear();
       if (parentAborted) return reject(new Error("aborted"));
 
       const base = { output, usage, turns, durationMs: Date.now() - started };
@@ -272,7 +282,21 @@ export function runChild(
     };
 
     send({ id: PROMPT_ID, type: "prompt", message: spec.prompt });
-    onStart?.({ send: (command) => !settled && child.stdin.writable && (send(command), true) });
+    onStart?.({
+      send: (command) => {
+        if (settled || !child.stdin.writable) return false;
+        if (command.type === "abort") abortChild();
+        else send(command);
+        return true;
+      },
+      setModel: (provider, modelId) =>
+        new Promise((resolve) => {
+          if (settled || !child.stdin.writable) return resolve("the subagent is not running");
+          const id = `pipipi-model-${requests.size}-${Date.now()}`;
+          requests.set(id, resolve);
+          send({ id, type: "set_model", provider, modelId });
+        }),
+    });
 
     child.on("error", (err) => finish(null, new Error(`could not start ${spec.command}: ${err.message}`)));
     child.on("close", (code) => finish(code));

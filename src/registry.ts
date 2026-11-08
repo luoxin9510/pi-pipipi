@@ -42,6 +42,7 @@ class Registry {
   private handles = new Map<string, ChildHandle>();
   private prior = new Map<string, { turns: number; usage: Usage }>(); // totals before the exchange in progress
   private tails = new Map<string, Promise<void>>(); // per subagent: resolves when the last queued turn has ended
+  private stopping = new Set<string>(); // stop requested for the exchange in progress
   private listeners =new Set<() => void>();
 
   // The parent session's subagents, newest first.
@@ -77,6 +78,32 @@ class Registry {
       // `release` is set once prev has resolved; an abort while waiting must still free the place in line
       void prev.then(() => release());
     }
+  }
+
+  // Stop a running subagent (rpc abort). False when it is not running.
+  stop(id: string): boolean {
+    if (!this.handles.get(id)?.send({ type: "abort" })) return false;
+    this.stopping.add(id);
+    return true;
+  }
+
+  // True once, if the exchange that just ended was stopped by the user.
+  wasStopped(id: string): boolean {
+    return this.stopping.delete(id);
+  }
+
+  // Use this model (provider/id) for the subagent's later exchanges, and switch the running child now. Returns why
+  // not, if pi refuses; then nothing is stored.
+  async setModel(id: string, model: string): Promise<string | undefined> {
+    const handle = this.handles.get(id);
+    if (handle) {
+      const slash = model.indexOf("/");
+      const error = await handle.setModel(model.slice(0, slash), model.slice(slash + 1));
+      if (error !== undefined) return error;
+    }
+    const record = this.update(id, { model });
+    this.writeMeta(record);
+    return undefined;
   }
 
   // True while a turn runs or waits for this subagent.

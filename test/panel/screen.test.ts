@@ -94,8 +94,8 @@ test("/main and Esc leave; other slash commands only show a notice", () => {
     for (const ch of s) screen.handleInput(ch);
     screen.handleInput("\r");
   };
-  type("/model");
-  assert.match(screen.render(100).at(-1)!, /\/model is not available on a subagent screen/);
+  type("/nonsense");
+  assert.match(screen.render(100).at(-1)!, /\/nonsense is not available on a subagent screen/);
   assert.equal(left(), 0);
   type("/main");
   assert.equal(left(), 1);

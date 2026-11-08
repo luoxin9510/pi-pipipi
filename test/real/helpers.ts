@@ -61,6 +61,7 @@ interface Ctx {
   notes?: string[];
   sessionId?: string; // reuse a parent session id: loading again with it simulates /reload or resuming the parent
   pick?: (options: string[]) => string | undefined; // answers ui.select
+  models?: string[]; // "provider/id" list ctx.modelRegistry offers on a subagent screen's /model
   idle?: () => boolean; // main's state as ctx.isIdle() reports it; default idle
 }
 
@@ -105,6 +106,7 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
         return pickId ? options.find((o) => o.endsWith(pickId!)) : c.pick?.(options);
       },
     },
+    modelRegistry: { getAvailable: () => (c.models ?? []).map((m) => ({ provider: m.split("/")[0], id: m.split("/")[1] })) },
     isIdle: () => c.idle?.() ?? true,
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-haiku-5-5" },
     thinkingLevel: c.thinkingLevel ?? "off",
