@@ -38,6 +38,7 @@ function wrapper(t: Loaded) {
   return {
     delivered,
     run: (id: string, script: Script, signal?: AbortSignal) => tool.execute(id, { script }, signal, undefined, t.ctx),
+    runWith: (ctx: unknown, id: string, script: Script) => tool.execute(id, { script }, undefined, undefined, ctx),
   };
 }
 
@@ -210,4 +211,16 @@ test("backgroundScripts false: the wrapper hands every call straight to pi's cod
   const r = await tool.execute("cOff", {}, undefined, undefined, t.ctx);
   assert.equal(r.content[0].text, "plain cOff");
   assert.equal(scripts.list("parent-id").length, before, "no script is tracked");
+});
+
+test("no UI (print mode, `pi -p`): a script that starts an agent stays in the foreground and returns its own result", async () => {
+  // pi exits when a print-mode turn ends, so a background script's result would be lost.
+  const s = sandbox();
+  s.scenario({ lines: happyLines("fg-out") });
+  const t = await loadTool(cfg, { cwd: s.repo });
+  const w = wrapper(t);
+  const ctx = { ...t.ctx, hasUI: false };
+  const result = await w.runWith(ctx, "cPrint", async ({ agent }) => `got ${(await agent()).status}`);
+  assert.equal(result.content[0].text, "got completed");
+  assert.deepEqual(w.delivered, []);
 });

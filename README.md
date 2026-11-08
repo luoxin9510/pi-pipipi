@@ -229,7 +229,8 @@ running. **Ending the session** (quit, reload, `/new`, resume) stops every backg
 agents are marked stopped and stay resumable.
 
 `pipipi.backgroundScripts: false` turns all of this off: pi's own `codemode` tool runs unwrapped and a script that
-starts an agent waits for it, as in v2. Your `codemode` settings (`mode`, `inlineBudget`) are unaffected either way.
+starts an agent waits for it, as in v2. Print mode (`pi -p`) behaves the same way on its own, since pi exits when the
+turn ends and a background result would be lost. Your `codemode` settings (`mode`, `inlineBudget`) are unaffected either way.
 
 ## Codemode-only children
 
@@ -299,7 +300,7 @@ The real suite drives the Agent tool in-process with real children: the pinned p
 real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 139 tests (70 real, 28
+read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 140 tests (70 real, 29
 fault, 19 panel, 11 tui, 11 parent) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
 (measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
 `usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on

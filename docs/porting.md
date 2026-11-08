@@ -107,7 +107,7 @@ subagent and `x` / `/stop` (they need a live stdin).
 | `pi.registerCommand(name, { handler(args, ctx: ExtensionCommandContext) })` | `/subagents` | no `/subagents` |
 | `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })`; also `{ triggerTurn: true }` for a background script's result | the note to main, the background script message | main is not told about your exchanges |
 | `ctx.cwd`, `ctx.model {provider,id}` (may be undefined: `inherit` then throws), `ctx.thinkingLevel`, `ctx.isProjectTrusted()`, `ctx.isIdle()` | `src/agent-tool.ts`, `src/index.ts` | `inherit`, thinking and trust mirroring, the note's delivery |
-| `ctx.hasUI`, `ctx.ui.notify` | `src/index.ts` | gates the panel and discovery warnings; false = tool only, no UI |
+| `ctx.hasUI`, `ctx.ui.notify` | `src/index.ts` | gates the panel, discovery warnings and background scripts; false = tool only, no UI, scripts stay in the foreground (print mode exits at turn end) |
 | `ctx.sessionManager.getSessionFile()` / `getSessionId()` | sessions, registry | children run `--no-session`, no resume. The session dir must be writable: pi-pipipi writes `subagents/` there and rebuilds its list from it on every `session_start` (startup, reload, resume, new) |
 | `ctx.modelRegistry.getAvailable()` | `/model` picker | type `/model provider/id` only |
 

@@ -135,7 +135,8 @@ export function endMessage(script: ScriptRecord, state: ScriptState, text: strin
 }
 
 // Register the wrapper. `deliver` hands main a message (the extension entry decides triggerTurn or steer).
-// With `enabled()` false (pipipi.backgroundScripts: false) the wrapper passes every call straight to pi's codemode.
+// With `enabled()` false (pipipi.backgroundScripts: false) or no UI (print mode) the wrapper passes every call straight
+// to pi's codemode.
 export function installBackground(
   pi: ExtensionAPI,
   deliver: (content: string) => void,
@@ -149,7 +150,8 @@ export function installBackground(
   pi.registerTool({
     ...def,
     async execute(id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: any, ctx: ExtensionContext) {
-      if (!enabled()) return def.execute(id, params, signal, onUpdate, ctx);
+      // No UI (print mode): pi exits when the turn ends, so a background result would be lost; keep the script in front.
+      if (!enabled() || !ctx.hasUI) return def.execute(id, params, signal, onUpdate, ctx);
       const own = new AbortController(); // not tied to main's turn once the script is in the background
       let moved!: () => void;
       const background = new Promise<"background">((r) => (moved = () => r("background")));
