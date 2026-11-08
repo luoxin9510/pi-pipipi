@@ -14,7 +14,7 @@ test("the reply appears on the screen while the subagent is still writing it, an
     await pi.waitFor("claude-haiku");
     pi.submit(SCRIPT);
     await pi.waitFor("● running · general-purpose(stream probe)", 90_000);
-    pi.press("down", "enter");
+    pi.press("down", "down", "enter"); // the script row comes first
     await pi.waitFor(/main › general-purpose\(stream probe\)/);
 
     // some rows are on screen, the last is not, and the subagent is still running: text arrived before the message ended

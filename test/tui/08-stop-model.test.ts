@@ -14,7 +14,7 @@ test("x on a running panel row stops the subagent; main's script gets the failed
     await pi.waitFor("claude-haiku");
     pi.submit(script("stop by x"));
     await pi.waitFor((s) => /running · general-purpose\(stop by x\) · [1-9]\d* turns · bash/.test(s), 90_000);
-    pi.press("down");
+    pi.press("down", "down");
     await pi.waitFor("x stop");
     pi.type("x");
     await pi.waitFor("chk:failed|stopped by user", 30_000);
@@ -27,7 +27,7 @@ test("/model and /stop on the subagent screen", async () => {
     await pi.waitFor("claude-haiku");
     pi.submit(script("screen stop"));
     await pi.waitFor((s) => /running · general-purpose\(screen stop\) · [1-9]\d* turns · bash/.test(s), 90_000);
-    pi.press("down", "enter");
+    pi.press("down", "down", "enter");
     await pi.waitFor((s) => /main › general-purpose\(screen stop\)/.test(s) && s.includes("/stop /model"));
 
     // a model named in the command

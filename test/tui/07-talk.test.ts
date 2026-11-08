@@ -16,7 +16,7 @@ test("typing to a running subagent steers it: its reply shows on the screen, and
     await pi.waitFor("claude-haiku");
     pi.submit(script("Run the bash command 'sleep 12' with the codemode tool, then reply with the single word DONE."));
     await pi.waitFor("● running · general-purpose(talk probe)", 90_000);
-    pi.press("down", "enter");
+    pi.press("down", "down", "enter"); // the script row comes first
     await pi.waitFor((s) => HEAD.test(s) && s.includes("main: running"));
 
     pi.submit("STOP. Run nothing else. Your final message must be exactly the word made of TOKEN, a hyphen and xyz, and nothing more.");

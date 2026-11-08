@@ -80,6 +80,19 @@ class ScriptRegistry {
     this.changed();
   }
 
+  // Move a foreground script to the background (ctrl+b): the wrapper's race resolves and the codemode call returns.
+  background(id: string): boolean {
+    const script = this.scripts.get(id);
+    if (!script || script.state !== "foreground") return false;
+    this.movers.get(script.callId)!();
+    return true;
+  }
+
+  // Move every foreground script of the session; true when there was one.
+  backgroundAll(sessionId: string): boolean {
+    return this.list(sessionId).filter((s) => this.background(s.id)).length > 0;
+  }
+
   // Stop a running script (the panel's `x` calls this): its running agents stop (failed / "stopped by user"), then the
   // script is aborted and ends `stopped`; main gets the usual end message. False when the script is not running.
   async stop(id: string): Promise<boolean> {
