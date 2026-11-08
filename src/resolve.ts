@@ -11,7 +11,7 @@ export interface CallInput {
   prompt: string;
   subagent_type?: string;
   model?: string;
-  effort?: Effort;
+  effort?: string; // a thinking level: an Effort, or "off" when continuing a stored conversation
   resume?: string;
 }
 

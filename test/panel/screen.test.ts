@@ -35,7 +35,7 @@ function setup(sessionId: string, agentId: string) {
   (registry as any).records.get(agentId).sessionDir = dir;
   let left = 0;
   const idle = { value: false };
-  const screen = new SubagentScreen(tui, theme, agentId, () => idle.value, "/tmp", () => left++);
+  const screen = new SubagentScreen(tui, theme, agentId, () => idle.value, { cwd: "/tmp" } as any, () => left++);
   return { screen, file, left: () => left, idle };
 }
 
@@ -88,7 +88,7 @@ test("the screen is exactly the terminal height; scrolling reaches earlier lines
   screen.dispose();
 });
 
-test("/main and Esc leave; other slash commands and plain text only show a notice", () => {
+test("/main and Esc leave; other slash commands only show a notice", () => {
   const { screen, left } = setup("s3", "agent3");
   const type = (s: string) => {
     for (const ch of s) screen.handleInput(ch);
@@ -96,8 +96,6 @@ test("/main and Esc leave; other slash commands and plain text only show a notic
   };
   type("/model");
   assert.match(screen.render(100).at(-1)!, /\/model is not available on a subagent screen/);
-  type("hello");
-  assert.match(screen.render(100).at(-1)!, /not available yet/);
   assert.equal(left(), 0);
   type("/main");
   assert.equal(left(), 1);

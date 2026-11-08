@@ -17,7 +17,10 @@ import {
   UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, type Focusable, Input, matchesKey, Text, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { parentContext } from "./agent-tool.ts";
 import { registry, type SubagentRecord } from "./registry.ts";
+import type { ParentContext } from "./resolve.ts";
+import { talkTo } from "./talk.ts";
 
 export const POLL_MS = 300;
 const PAD = 1;
@@ -90,15 +93,15 @@ export class SubagentScreen implements Component, Focusable {
   private theme: Theme;
   private id: string;
   private mainIdle: () => boolean;
-  private cwd: string;
+  private parent: ParentContext;
   private done: () => void;
 
-  constructor(tui: TUI, theme: Theme, id: string, mainIdle: () => boolean, cwd: string, done: () => void) {
+  constructor(tui: TUI, theme: Theme, id: string, mainIdle: () => boolean, parent: ParentContext, done: () => void) {
     this.tui = tui;
     this.theme = theme;
     this.id = id;
     this.mainIdle = mainIdle;
-    this.cwd = cwd;
+    this.parent = parent;
     this.done = done;
     this.unsubscribe = registry.subscribe(() => this.tui.requestRender());
     this.timer = setInterval(() => this.tui.requestRender(), POLL_MS);
@@ -117,7 +120,24 @@ export class SubagentScreen implements Component, Focusable {
     this.input.setValue("");
     if (text === "/main") return this.done();
     if (text.startsWith("/")) this.notice = `${text.split(/\s/)[0]} is not available on a subagent screen (/main goes back)`;
-    else if (text) this.notice = "talking to a subagent is not available yet";
+    else if (text) this.say(text);
+  }
+
+  // Steer the subagent, or continue it; the reply shows up as the session file grows.
+  private say(text: string): void {
+    try {
+      const { delivery, done } = talkTo(this.parent, this.id, text);
+      this.notice = { steered: "sent: the subagent gets it after its current step", queued: "queued: sent when the subagent is free", started: "" }[delivery];
+      done.catch((err) => this.fail(err));
+    } catch (err) {
+      this.fail(err);
+    }
+    this.tui.requestRender();
+  }
+
+  private fail(err: unknown): void {
+    this.notice = `could not send: ${(err as Error).message}`;
+    this.tui.requestRender();
   }
 
   handleInput(data: string): void {
@@ -142,7 +162,7 @@ export class SubagentScreen implements Component, Focusable {
     const signature = `${file}:${st.size}:${st.mtimeMs}`;
     if (signature === this.signature) return;
     this.signature = signature;
-    this.parts = transcriptParts(file, this.tui, this.cwd);
+    this.parts = transcriptParts(file, this.tui, this.parent.cwd);
     this.linesWidth = -1;
   }
 
@@ -187,7 +207,7 @@ let current: Promise<void> | undefined;
 export function openSubagentScreen(ctx: ExtensionContext, r: SubagentRecord): Promise<void> {
   if (current) return current;
   current = ctx.ui
-    .custom<void>((tui, theme, _kb, done) => new SubagentScreen(tui, theme, r.id, () => ctx.isIdle(), ctx.cwd, () => done()), {
+    .custom<void>((tui, theme, _kb, done) => new SubagentScreen(tui, theme, r.id, () => ctx.isIdle(), parentContext(ctx), () => done()), {
       overlay: true,
       overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left" },
     })

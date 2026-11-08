@@ -61,6 +61,7 @@ interface Ctx {
   notes?: string[];
   sessionId?: string; // reuse a parent session id: loading again with it simulates /reload or resuming the parent
   pick?: (options: string[]) => string | undefined; // answers ui.select
+  idle?: () => boolean; // main's state as ctx.isIdle() reports it; default idle
 }
 
 // The extension against a stub ExtensionAPI; the Agent tool is called directly. piCommand defaults to the pinned pi.
@@ -71,10 +72,14 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
   const menus: { title: string; options: string[] }[] = [];
   const handlers: Record<string, Function[]> = {};
   const notes: string[] = c.notes ?? [];
+  const messages: { message: any; options: any }[] = []; // pi.sendMessage calls: what main was sent, and how
+  const components: any[] = []; // every subagent screen opened, kept alive
+  let pickId: string | undefined;
   const pi = {
     on: (event: string, h: Function) => (handlers[event] ??= []).push(h),
     registerTool: (t: any) => (tools[t.name] = t),
     registerCommand: (name: string, c: any) => (commands[name] = c),
+    sendMessage: (message: any, options: any) => messages.push({ message, options }),
     getSettings: () => ({ pipipi: { piCommand: PI, ...settings } }),
   };
   pipipi(pi as any);
@@ -92,15 +97,15 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
         const theme = { fg: (_c: string, x: string) => x, bg: (_c: string, x: string) => x, bold: (x: string) => x };
         const component = factory({ terminal: { rows: 24 }, requestRender() {} }, theme, {}, () => {});
         screens.push(component.render(100)[0]);
-        component.dispose();
+        components.push(component);
         return Promise.resolve();
       },
       select: async (title: string, options: string[]) => {
         menus.push({ title, options });
-        return c.pick?.(options);
+        return pickId ? options.find((o) => o.endsWith(pickId!)) : c.pick?.(options);
       },
     },
-    isIdle: () => true,
+    isIdle: () => c.idle?.() ?? true,
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-haiku-5-5" },
     thinkingLevel: c.thinkingLevel ?? "off",
     isProjectTrusted: () => c.trusted ?? true,
@@ -115,7 +120,18 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
     updates,
     menus,
     screens,
+    messages,
     sessionId,
+    // The user types a line on the subagent's screen (opened through /subagents) and presses Enter.
+    async say(agentId: string, text: string) {
+      pickId = agentId;
+      await self.command("subagents");
+      pickId = undefined;
+      const screen = components.at(-1);
+      for (const ch of text) screen.handleInput(ch);
+      screen.handleInput("\r");
+      return screen;
+    },
     command: (name: string, args = "") => commands[name].handler(args, ctx),
     registered: tool !== undefined,
     sessionDir: sessionFile ? join(dirname(sessionFile), "subagents", sessionId) : undefined,

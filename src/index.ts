@@ -1,9 +1,10 @@
 // pi-pipipi extension entry: register the `Agent` tool for codemode scripts.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { agentTool, describeAgents, limitConcurrency, parentContext } from "./agent-tool.ts";
+import { agentTool, describeAgents, parentContext } from "./agent-tool.ts";
 import { type Config, readConfig } from "./config.ts";
 import { discoverAgents } from "./discovery.ts";
+import { bindTalk, limitConcurrency } from "./exchange.ts";
 import { installPanel } from "./panel.ts";
 import { registry } from "./registry.ts";
 import { subagentsCommand } from "./subagents-command.ts";
@@ -24,6 +25,11 @@ export default function pipipi(pi: ExtensionAPI) {
       throw err;
     }
     limitConcurrency(config.maxConcurrent);
+    bindTalk({
+      config: () => config!,
+      // Main running: the note steers it (no new turn). Main idle: it is stored, and no turn starts.
+      note: (content) => pi.sendMessage({ customType: "pi-pipipi", content, display: true }, ctx.isIdle() ? undefined : { deliverAs: "steer" }),
+    });
     registry.rebuild(parentContext(ctx));
     const discovery = discoverAgents(ctx.cwd);
     pi.registerTool(agentTool(() => config!, describeAgents(discovery)));

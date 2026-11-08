@@ -41,7 +41,8 @@ class Registry {
   private records = new Map<string, SubagentRecord>();
   private handles = new Map<string, ChildHandle>();
   private prior = new Map<string, { turns: number; usage: Usage }>(); // totals before the exchange in progress
-  private listeners = new Set<() => void>();
+  private tails = new Map<string, Promise<void>>(); // per subagent: resolves when the last queued turn has ended
+  private listeners =new Set<() => void>();
 
   // The parent session's subagents, newest first.
   list(parentSessionId: string): SubagentRecord[] {
@@ -55,6 +56,37 @@ class Registry {
   // The live child of a running subagent; undefined when it is not running.
   handle(id: string): ChildHandle | undefined {
     return this.handles.get(id);
+  }
+
+  // Run `fn` when every earlier turn of this subagent has ended: one process per subagent, in arrival order. A caller
+  // that aborts while waiting leaves the queue without running.
+  async turn<T>(id: string, signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+    const prev = this.tails.get(id) ?? Promise.resolve();
+    let release!: () => void;
+    const tail = prev.then(() => new Promise<void>((resolve) => (release = resolve)));
+    this.tails.set(id, tail);
+    void tail.then(() => this.tails.get(id) === tail && this.tails.delete(id));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) return reject(new Error("aborted"));
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        void prev.then(resolve);
+      });
+      return await fn();
+    } finally {
+      // `release` is set once prev has resolved; an abort while waiting must still free the place in line
+      void prev.then(() => release());
+    }
+  }
+
+  // True while a turn runs or waits for this subagent.
+  busy(id: string): boolean {
+    return this.tails.has(id);
+  }
+
+  // Resolves when every turn queued so far has ended.
+  async drained(id: string): Promise<void> {
+    await this.tails.get(id);
   }
 
   // Called after any record changes. Returns the unsubscribe function.

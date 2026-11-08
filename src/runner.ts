@@ -74,7 +74,8 @@ interface AssistantMessage {
 // Commands a live child accepts over its rpc stdin (docs/rpc-commands.md). The seam for the subagent registry:
 // it can steer, abort or switch the model of a running child.
 export interface ChildHandle {
-  send(command: { type: "steer"; message: string } | { type: "abort" } | { type: "set_model"; provider: string; modelId: string }): void;
+  // false when the child can no longer take commands (its run settled, or it exited)
+  send(command: { type: "steer"; message: string } | { type: "abort" } | { type: "set_model"; provider: string; modelId: string }): boolean;
 }
 
 export function runChild(
@@ -271,7 +272,7 @@ export function runChild(
     };
 
     send({ id: PROMPT_ID, type: "prompt", message: spec.prompt });
-    onStart?.({ send });
+    onStart?.({ send: (command) => !settled && child.stdin.writable && (send(command), true) });
 
     child.on("error", (err) => finish(null, new Error(`could not start ${spec.command}: ${err.message}`)));
     child.on("close", (code) => finish(code));
