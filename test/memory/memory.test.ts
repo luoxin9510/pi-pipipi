@@ -100,8 +100,19 @@ test("disallowedTools Write or Edit: memory is read-only, the prompt says so, th
     const tools = toolsOf(spec.args);
     assert.ok(tools.includes("read") && !tools.includes("write") && !tools.includes("edit"), denied);
     assert.ok(spec.args[spec.args.indexOf("--exclude-tools") + 1].includes(denied.toLowerCase()));
-    assert.ok(spec.systemPrompt.includes("read-only"));
+    assert.ok(spec.systemPrompt.includes("not allowed for you"));
     assert.ok(spec.warnings.some((w) => w.includes("memory") && w.includes("read-only")));
   }
-  assert.equal(setup().resolve().systemPrompt.includes("read-only"), false);
+  assert.equal(setup().resolve().systemPrompt.includes("not allowed for you"), false);
+});
+
+test("a memory agent's name must be a safe directory name; without memory any name parses", () => {
+  const names = ['"a/b"', '".."', '".hidden"', '"a*"', '"a?"', '"a[b"', '"a]b"', '"a!b"', '"a#b"', '"a\\\\b"', '"a\\0b"', '"a\\nb"'];
+  for (const n of names) {
+    const r = parseDefinition("x.md", agentFile(`name: ${n}\ndescription: d\nmemory: local`));
+    assert.ok(!r.ok, n);
+    assert.match(r.reason, /memory/, n);
+    assert.ok(parseDefinition("x.md", agentFile(`name: ${n}\ndescription: d`)).ok, `${n} without memory`);
+  }
+  assert.ok(parseDefinition("x.md", agentFile("name: my-agent_2.v\ndescription: d\nmemory: user")).ok);
 });

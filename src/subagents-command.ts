@@ -5,7 +5,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { label, modelInfo, registry, type SubagentRecord } from "./registry.ts";
 import { stopEverything } from "./stop-all.ts";
 import { openSubagentScreen } from "./subagent-screen.ts";
-import { listWorktrees, removeWorktree, type WorktreeInfo } from "./worktree.ts";
+import { listLines, listWorktrees, removeWorktree, type WorktreeInfo } from "./worktree.ts";
 
 const line = (r: SubagentRecord) => `${r.status.padEnd(9)} ${label(r)} · ${modelInfo(r) ? `${modelInfo(r)} · ` : ""}${r.turns} turns · ${r.id}`;
 
@@ -33,7 +33,8 @@ export async function subagentsCommand(ctx: ExtensionCommandContext, args = ""):
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const summary = (w: WorktreeInfo) => (w.outcome.changed ? `${plural(w.outcome.files.length, "file")}, ${plural(w.outcome.commits.length, "commit")}` : "no changes");
-const worktreeRow = (w: WorktreeInfo) => `${w.agentId} · ${w.ref.branch} · ${summary(w)} · ${w.ref.path}`;
+const isRunning = (w: WorktreeInfo) => registry.get(w.agentId)?.status === "running";
+const worktreeRow = (w: WorktreeInfo) => `${w.agentId} · ${isRunning(w) ? "running · " : ""}${w.ref.branch} · ${summary(w)} · ${w.ref.path}`;
 
 // What removing it would lose, in words for the confirm.
 function lossText(w: WorktreeInfo): string {
@@ -41,12 +42,9 @@ function lossText(w: WorktreeInfo): string {
   if (!w.outcome.changed) lines.push("It has no changes.");
   else {
     const { files, commits } = w.outcome;
-    const more = (list: string[]) => (list.length > 10 ? [`  ... and ${list.length - 10} more`] : []);
-    if (files.length > 0) lines.push(`These ${plural(files.length, "changed file")} will be lost:`, ...files.slice(0, 10).map((f) => `  ${f}`), ...more(files));
-    if (commits.length > 0) lines.push(`These ${plural(commits.length, "commit")} on the branch will be lost:`, ...commits.slice(0, 10).map((c) => `  ${c}`), ...more(commits));
+    if (files.length > 0) lines.push(`These ${plural(files.length, "changed file")} will be lost:`, ...listLines(files, 10));
+    if (commits.length > 0) lines.push(`These ${plural(commits.length, "commit")} on the branch will be lost:`, ...listLines(commits, 10));
   }
-  const running = registry.get(w.agentId)?.status === "running";
-  if (running) lines.push("", "The agent is still running in it.");
   lines.push("", "The worktree and the branch are deleted. This cannot be undone.");
   return lines.join("\n");
 }
@@ -60,9 +58,14 @@ export async function worktreesCommand(ctx: ExtensionCommandContext): Promise<vo
     const choice = await ctx.ui.select("Kept worktrees (pick one to remove)", rows);
     if (choice === undefined) return;
     const picked = found[rows.indexOf(choice)]!;
+    if (isRunning(picked)) {
+      ctx.ui.notify(`pi-pipipi: agent ${picked.agentId} is still running in ${picked.ref.path}; stop it (or wait) before removing its worktree`, "warning");
+      continue;
+    }
     if (!(await ctx.ui.confirm("Remove worktree?", lossText(picked)))) continue;
     try {
       await removeWorktree(picked.ref);
+      registry.markWorktreeRemoved(picked.agentId);
       removedAny = true;
       ctx.ui.notify(`pi-pipipi: removed worktree ${picked.ref.path} and branch ${picked.ref.branch}`, "info");
     } catch (err) {

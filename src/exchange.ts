@@ -91,7 +91,12 @@ async function settle(spec: ChildSpec): Promise<{ worktree?: WorktreeOutcome }> 
   const ref = spec.worktree;
   if (!ref) return {};
   try {
-    return { worktree: await settleWorktree(ref) };
+    const outcome = await settleWorktree(ref);
+    if (outcome.changed === false && outcome.gone) {
+      spec.warnings.push(`worktree ${ref.path} no longer existed when the run ended (removed by someone else); branch ${ref.branch} was left as it is`);
+      return { worktree: { changed: false } };
+    }
+    return { worktree: outcome };
   } catch (err) {
     spec.warnings.push(`could not inspect or clean up worktree ${ref.path}: ${(err as Error).message}`);
     return { worktree: { changed: true, path: ref.path, branch: ref.branch, files: [], commits: [] } };
@@ -111,15 +116,20 @@ export async function exchange(
     try {
       // Created once the slot is ours and before anything is recorded: a git failure leaves no subagent and no child.
       if (spec.worktree) spec.warnings.push(...(await ensureWorktree(spec.worktree)));
-      registry.begin(parent, {
-        id,
-        type: info.type,
-        description: info.description,
-        model: spec.model,
-        thinking: spec.thinking,
-        color: info.color,
-        ...(spec.worktree ? { worktree: spec.worktree } : {}),
-      });
+      try {
+        registry.begin(parent, {
+          id,
+          type: info.type,
+          description: info.description,
+          model: spec.model,
+          thinking: spec.thinking,
+          color: info.color,
+          ...(spec.worktree ? { worktree: spec.worktree } : {}),
+        });
+      } catch (err) {
+        await settle(spec); // the worktree exists but no child will run in it
+        throw err;
+      }
       let run: RunResult;
       try {
         run = await runChild(
@@ -134,9 +144,11 @@ export async function exchange(
         );
       } catch (err) {
         // runChild rejects only when its caller aborted
-        await settle(spec);
+        const left = await settle(spec);
         registry.finish(id, "stopped");
         userSteers.delete(id);
+        // The call throws, so the result's `worktree` is lost: the error carries where the kept one is.
+        if (left.worktree?.changed && err instanceof Error) err.message += `; worktree kept: ${left.worktree.path} (branch ${left.worktree.branch})`;
         throw err;
       }
       const kept = await settle(spec);

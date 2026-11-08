@@ -41,6 +41,9 @@ export const inertNotice = (field: string) => `field "${field}" has no effect in
 
 class Skip extends Error {}
 
+// The agent name becomes a directory name and a line in .git/info/exclude.
+const isMemoryName = (name: string) => name !== "" && !name.startsWith(".") && !/[\\/\0\r\n*?[\]!#]/.test(name);
+
 // Claude Code accepts a comma-separated string or a YAML list.
 function nameList(value: unknown, field: string): string[] | undefined {
   if (value === undefined || value === null) return undefined;
@@ -78,6 +81,9 @@ export function parseDefinition(source: string, text: string): ParseResult {
   if (name.length === 0 || name.length > 256) return { ok: false, reason: '"name" must be 1-256 characters' };
   if (name.includes(":")) return { ok: false, reason: '"name" must not contain ":"' };
   if (name.startsWith("-")) return { ok: false, reason: '"name" must not start with "-"' };
+  if (f.memory !== undefined && f.memory !== null && !isMemoryName(name)) {
+    return { ok: false, reason: `"name" ${JSON.stringify(name)} cannot be used with "memory": it becomes a directory name, so it must not be empty or start with ".", or contain a path separator, NUL, a newline or any of * ? [ ] ! #` };
+  }
   if (typeof f.description !== "string" || f.description.trim() === "") return { ok: false, reason: 'missing "description"' };
 
   try {

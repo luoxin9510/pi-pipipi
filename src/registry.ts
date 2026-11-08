@@ -272,6 +272,14 @@ class Registry {
     this.emit();
   }
 
+  // `/subagents worktrees` removed the subagent's worktree and branch: a resume must not recreate it.
+  markWorktreeRemoved(id: string): void {
+    const old = this.records.get(id);
+    if (!old?.worktree) return;
+    const record = this.update(id, { worktree: { ...old.worktree, removed: "user" } });
+    this.writeMeta(record);
+  }
+
   attach(id: string, handle: ChildHandle): void {
     this.handles.set(id, handle);
     this.emit();

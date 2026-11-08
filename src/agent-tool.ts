@@ -10,7 +10,7 @@ import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ChildSpec, type ParentContext, resolveChild } from "./resolve.ts";
 import { exchange } from "./exchange.ts";
 import { capText, newAgentId, storedAgent } from "./sessions.ts";
-import { addExclude, gitRoot, planWorktree,type WorktreeOutcome, type WorktreeRef } from "./worktree.ts";
+import { listLines, memoryRoot as memoryRootFor, planWorktree, type WorktreeOutcome, type WorktreeRef } from "./worktree.ts";
 import { emptyUsage, type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
@@ -102,11 +102,10 @@ const SHOWN = 20; // files and commits listed in the text main reads; the struct
 // The lines telling main where a kept worktree is. Nothing for a removed one.
 export function worktreeLines(w: WorktreeOutcome | undefined): string[] {
   if (!w?.changed) return [];
-  const more = (list: string[]) => (list.length > SHOWN ? [`  ... and ${list.length - SHOWN} more`] : []);
   return [
     `Worktree kept: ${w.path} (branch ${w.branch})`,
-    ...(w.files.length > 0 ? ["Changed files:", ...w.files.slice(0, SHOWN).map((f) => `  ${f}`), ...more(w.files)] : []),
-    ...(w.commits.length > 0 ? ["Commits:", ...w.commits.slice(0, SHOWN).map((c) => `  ${c}`), ...more(w.commits)] : []),
+    ...(w.files.length > 0 ? ["Changed files:", ...listLines(w.files, SHOWN)] : []),
+    ...(w.commits.length > 0 ? ["Commits:", ...listLines(w.commits, SHOWN)] : []),
   ];
 }
 
@@ -151,12 +150,7 @@ async function executeAgent(
   else if ((input.isolation ?? def.isolation) === "worktree") worktree = await planWorktree(parent.cwd, agentId);
 
   // Memory: project and local live under the main checkout (never the agent's worktree); outside a repo, the parent's cwd.
-  let memoryRoot: string | undefined;
-  if (def.memory === "project" || def.memory === "local") {
-    const root = await gitRoot(parent.cwd);
-    memoryRoot = root ?? parent.cwd;
-    if (root && def.memory === "local") await addExclude(root, `/.claude/agent-memory-local/${def.name}/`);
-  }
+  const memoryRoot = await memoryRootFor(def.memory, def.name, parent.cwd);
 
   const spec = resolveChild(def, input as CallInput, config, parent, { agentId, worktree, memoryRoot });
   scripts.addAgent(toolCallId, spec.agentId);

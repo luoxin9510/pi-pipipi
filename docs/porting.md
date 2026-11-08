@@ -121,12 +121,21 @@ The child gets the worktree as its cwd (`spawn` option) and in the prompt's `Wor
 stay in the parent's `subagents/<parent session id>/`. The meta file `<agentId>.json` gains
 `worktree: { root, path, branch, base }`.
 
+Failure behaviour worth copying. The per-repository lock is in-process only: two pi processes working in one repository
+are not serialised against each other (git's own lock then fails the second `worktree add`). Settling at the end of an
+exchange degrades instead of losing the run: if a git command fails there, the worktree is reported as kept with a result
+warning (path and branch given); a worktree whose directory vanished is reported as removed, with a warning, and its
+branch is left alone. A worktree removed by `/subagents worktrees` gets `removed: "user"` in the meta file's `worktree`
+object, and a resume of it throws naming the path instead of recreating it. Only an unchanged worktree removed by the
+exchange itself is recreated on resume. A foreground call aborted while its worktree was kept throws an error whose
+message ends with the kept path and branch.
+
 ### Agent memory (`memory` in the agent file, `src/resolve.ts`)
 
 No pi contract; the host needs Read, Write and Edit tools (mapped through `toolMap`) and the same two `rev-parse`
 commands as above (`--show-toplevel`, `--git-path info/exclude`). Directories: `~/.claude/agent-memory/<name>/`,
 `<repository root of the parent cwd>/.claude/agent-memory/<name>/`, `.../.claude/agent-memory-local/<name>/` (outside a
-repository the parent cwd replaces the root and no exclude is written; a name with a path separator is an error). Created
+repository the parent cwd replaces the root and no exclude is written; an agent file whose `name` is unsafe as a directory name is skipped when it sets `memory`). Created
 with `mkdir -p` when the child is resolved. Local scope appends `/.claude/agent-memory-local/<name>/` to the info/exclude
 file once. The prompt gets a `# Persistent memory` section after the skills and before `# Environment`: the directory, our
 instructions (read-only wording when Write or Edit is denied) and the head of `MEMORY.md` (first 200 lines, then at most

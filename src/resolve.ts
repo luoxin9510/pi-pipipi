@@ -129,7 +129,7 @@ function memorySection(dir: string, readOnly: boolean): string {
     "# Persistent memory",
     `You have a persistent memory directory: ${dir}`,
     readOnly
-      ? "Your tools do not allow writing, so this memory is read-only for you: read it, and do not try to change it."
+      ? "Writing to this memory is not allowed for you: read it, do not change it."
       : [
           "It survives between your runs. Save what a later run would want to know (conventions, decisions, user preferences, where things are), not what the code already shows.",
           "Keep `MEMORY.md` there as a short index: one line per memory, pointing to a topic file in the same directory when it needs more. Update an existing memory instead of adding a duplicate, and remove what turned out wrong.",
@@ -213,7 +213,7 @@ export function resolveChild(
   const memory = def.memory ? memorySection(memoryDir(def, parent, options), tools.memoryReadOnly) : undefined;
   const system = buildSystemPrompt(def, parent.cwd, cwd, new Date(), codemode, memory);
 
-  // A resume id was already checked by storedAgentType().
+  // A resume id was already checked by storedAgent().
   const agentId = input.resume ?? options.agentId ?? newAgentId();
   const session = parent.sessionFile ? ["--session-dir", subagentSessionDir(parent), "--session-id", agentId] : ["--no-session"];
 

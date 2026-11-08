@@ -11,10 +11,12 @@ export interface WorktreeRef {
   path: string; // <root>/.pi/worktrees/<agentId>
   branch: string; // pipipi/<agentId>
   base: string; // commit the worktree started from
+  removed?: "user"; // `/subagents worktrees` removed it (and its branch) while it held changes: a resume must not recreate it
 }
 
-// What an exchange leaves behind. `changed: false` means the worktree and its branch were removed.
-export type WorktreeOutcome = { changed: false } | { changed: true; path: string; branch: string; files: string[]; commits: string[] };
+// What an exchange leaves behind. `changed: false` means the worktree and its branch were removed; `gone` that the
+// worktree's directory had already vanished when the exchange ended (the exchange then adds a warning).
+export type WorktreeOutcome = { changed: false; gone?: true } | { changed: true; path: string; branch: string; files: string[]; commits: string[] };
 
 const EXCLUDE_LINE = "/.pi/worktrees/";
 const MAX_LISTED = 200; // files and commits reported per worktree
@@ -23,20 +25,32 @@ function git(cwd: string, args: string[], input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (!err) return resolve(stdout);
-      const detail = (err as NodeJS.ErrnoException).code === "ENOENT" ? "git is not installed" : stderr.trim() || err.message;
-      reject(new Error(`git ${args.slice(0, 2).join(" ")} failed in ${cwd}: ${detail}`));
+      const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
+      const detail = missing ? (existsSync(cwd) ? "git is not installed" : "the directory does not exist") : stderr.trim() || err.message;
+      reject(Object.assign(new Error(`git ${args.slice(0, 2).join(" ")} failed in ${cwd}: ${detail}`), { exitCode: (err as { code?: unknown }).code }));
     });
     if (input !== undefined) child.stdin!.end(input);
   });
 }
 
+const NOT_A_REPO = "not a git repository";
+
+// The first `shown` entries of a list, indented two spaces, then an "N more" line. Shared by the result text for main
+// and the `/subagents worktrees` confirm.
+export function listLines(list: string[], shown: number): string[] {
+  return [...list.slice(0, shown).map((e) => `  ${e}`), ...(list.length > shown ? [`  ... and ${list.length - shown} more`] : [])];
+}
+
 const gitLine = async (cwd: string, args: string[]) => (await git(cwd, args)).trim();
 
-// Git's own lock would fail concurrent `worktree add` calls in one repo: one at a time per root.
+// Git's own lock would fail concurrent `worktree add` calls in one repo: one at a time per root. In-process only: two pi
+// processes in one repository are not serialised.
 const locks = new Map<string, Promise<unknown>>();
 function locked<T>(root: string, work: () => Promise<T>): Promise<T> {
   const run = (locks.get(root) ?? Promise.resolve()).then(work, work);
-  locks.set(root, run.catch(() => {}));
+  const tail = run.then(() => {}, () => {});
+  locks.set(root, tail);
+  void tail.then(() => locks.get(root) === tail && locks.delete(root)); // idle: no entry left behind
   return run;
 }
 
@@ -46,7 +60,7 @@ export async function planWorktree(cwd: string, agentId: string): Promise<Worktr
   try {
     root = await gitLine(cwd, ["rev-parse", "--show-toplevel"]);
   } catch (err) {
-    if ((err as Error).message.includes("not installed")) throw err;
+    if (!(err as Error).message.includes(NOT_A_REPO)) throw err;
     throw new Error(`isolation "worktree" needs a git repository: ${cwd} is not inside a git repository`);
   }
   let base: string;
@@ -72,7 +86,7 @@ export async function gitRoot(cwd: string): Promise<string | undefined> {
   try {
     return await gitLine(cwd, ["rev-parse", "--show-toplevel"]);
   } catch (err) {
-    if ((err as Error).message.includes("not installed")) throw err;
+    if (!(err as Error).message.includes(NOT_A_REPO)) throw err;
     return undefined;
   }
 }
@@ -83,7 +97,12 @@ async function copyIncluded(root: string, path: string): Promise<void> {
   const listed = (await git(root, ["ls-files", "--others", "--ignored", "--exclude-from=.worktreeinclude", "-z"])).split("\0");
   const candidates = listed.filter((f) => f !== "" && !f.startsWith(".pi/worktrees/"));
   if (candidates.length === 0) return;
-  const ignored = (await git(root, ["check-ignore", "-z", "--stdin"], candidates.join("\0") + "\0").catch(() => "")).split("\0");
+  // Exit code 1 means no candidate is ignored: nothing to copy. Any other failure is a real error.
+  const checked = await git(root, ["check-ignore", "-z", "--stdin"], candidates.join("\0") + "\0").catch((err) => {
+    if (err.exitCode === 1) return "";
+    throw err;
+  });
+  const ignored = checked.split("\0");
   for (const file of ignored.filter((f) => f !== "")) {
     const to = join(path, file);
     if (existsSync(to)) continue;
@@ -97,6 +116,9 @@ async function copyIncluded(root: string, path: string): Promise<void> {
 export function ensureWorktree(ref: WorktreeRef): Promise<string[]> {
   return locked(ref.root, async () => {
     if (existsSync(ref.path)) return [];
+    if (ref.removed === "user") {
+      throw new Error(`worktree ${ref.path} was removed by the user together with its changes; it cannot be resumed (start a new agent instead)`);
+    }
     const warnings: string[] = [];
     if ((await git(ref.root, ["branch", "--list", ref.branch])).trim() !== "") {
       throw new Error(`worktree ${ref.path} was removed but its branch ${ref.branch} still exists; remove the branch with "git branch -D ${ref.branch}" or restore the worktree with "git worktree add ${ref.path} ${ref.branch}"`);
@@ -142,12 +164,17 @@ async function inspect(ref: WorktreeRef): Promise<WorktreeOutcome> {
 async function remove(ref: WorktreeRef): Promise<void> {
   if (existsSync(ref.path)) await git(ref.root, ["worktree", "remove", "--force", ref.path]);
   await git(ref.root, ["worktree", "prune"]);
-  await git(ref.root, ["branch", "-D", ref.branch]);
+  if ((await git(ref.root, ["branch", "--list", ref.branch])).trim() !== "") await git(ref.root, ["branch", "-D", ref.branch]); // already gone is fine
 }
 
 // End of an exchange, after the child has exited: an unchanged worktree is removed with its branch, a changed one is kept.
 export function settleWorktree(ref: WorktreeRef): Promise<WorktreeOutcome> {
   return locked(ref.root, async () => {
+    if (!existsSync(ref.path)) {
+      // Someone deleted the directory during the run. The branch is left alone: it may hold commits.
+      await git(ref.root, ["worktree", "prune"]);
+      return { changed: false, gone: true };
+    }
     const outcome = await inspect(ref);
     if (!outcome.changed) await remove(ref);
     return outcome;
@@ -173,7 +200,7 @@ export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
   try {
     out = await git(cwd, ["worktree", "list", "--porcelain"]);
   } catch (err) {
-    if ((err as Error).message.includes("not installed")) throw err;
+    if (!(err as Error).message.includes(NOT_A_REPO)) throw err;
     return [];
   }
   const entries = out.split("\n\n").map((block) => {
@@ -182,14 +209,30 @@ export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
   });
   const root = entries[0]?.path;
   if (root === undefined) return [];
-  const mainHead = await gitLine(root, ["rev-parse", "HEAD"]).catch(() => undefined);
+  // A repository without commits has no HEAD to compare with: bases then default to each worktree's own HEAD.
+  const mainHead = await gitLine(root, ["rev-parse", "HEAD"]).catch((err) => {
+    if (err.exitCode === 128) return undefined;
+    throw err;
+  });
   const found: WorktreeInfo[] = [];
   for (const { path, branch } of entries.slice(1)) {
     if (path === undefined || branch === undefined || !branch.startsWith("pipipi/") || !existsSync(path)) continue;
     const head = await gitLine(path, ["rev-parse", "HEAD"]);
-    const base = mainHead === undefined ? head : await gitLine(path, ["merge-base", head, mainHead]).catch(() => head);
+    const base = mainHead === undefined ? head : await gitLine(path, ["merge-base", head, mainHead]).catch((err) => {
+      if (err.exitCode === 1) return head; // no common ancestor
+      throw err;
+    });
     const ref: WorktreeRef = { root, path, branch, base };
     found.push({ agentId: branch.slice("pipipi/".length), ref, outcome: await inspect(ref) });
   }
   return found;
+}
+
+// Where project and local agent memory live: the main checkout (git root of `cwd`, never an agent's worktree), else `cwd`.
+// Local scope also keeps its directory out of git status through info/exclude. undefined for user memory or none.
+export async function memoryRoot(memory: "user" | "project" | "local" | undefined, name: string, cwd: string): Promise<string | undefined> {
+  if (memory !== "project" && memory !== "local") return undefined;
+  const root = await gitRoot(cwd);
+  if (root && memory === "local") await addExclude(root, `/.claude/agent-memory-local/${name}/`);
+  return root ?? cwd;
 }
