@@ -115,6 +115,7 @@ export function discoverAgents(cwd: string): Discovery {
       }
       winners.set(def.name, { dir, path });
       agents.set(def.name, dir === BUILTIN_DIR ? { ...def, source: `builtin:${def.name}` } : def);
+      for (const w of def.warnings) warnings.push(`${def.name}: ${w}`);
       for (const field of def.inert) warnings.push(`${def.name}: ${inertNotice(field)}`);
     }
   }

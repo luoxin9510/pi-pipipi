@@ -23,14 +23,14 @@ export default function pipipi(pi: ExtensionAPI) {
   };
 
   // Wraps codemode so a script that starts an Agent moves to the background (unless pipipi.backgroundScripts is false).
-  // Delivery to main: a turn starts when it is idle, a steer when it runs.
+  // Delivery to main: a steer when it runs, else a turn starts.
   let closing = false; // the session is ending: its stops send nothing to main
+  // pi routes `triggerTurn` + `steer` itself: streaming -> steer, otherwise (idle, compacting) a run starts.
   const deliver = (content: string) =>
-    !closing &&
-    pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" });
+    !closing && pi.sendMessage({ customType: "pi-pipipi", content, display: true }, { triggerTurn: true, deliverAs: "steer" });
   installBackground(pi, deliver, () => config?.backgroundScripts !== false);
 
-  pi.registerCommand("subagents", { description: "List this session's subagents", handler: (_args, ctx) => subagentsCommand(ctx) });
+  pi.registerCommand("subagents", { description: "List this session's subagents; `stop` stops everything running; `worktrees` lists and removes kept worktrees", handler: (args, ctx) => subagentsCommand(ctx, args) });
   pi.on("agent_start", track);
   pi.on("agent_end", track);
 
@@ -40,6 +40,7 @@ export default function pipipi(pi: ExtensionAPI) {
     closing = true;
     const sessionId = ctx.sessionManager.getSessionId();
     await scripts.stopAll(sessionId);
+    registry.abortQueuedOf(sessionId);
     await registry.stopAll(registry.list(sessionId).filter((r) => r.status === "running").map((r) => r.id));
   });
 

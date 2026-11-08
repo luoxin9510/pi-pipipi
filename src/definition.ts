@@ -5,6 +5,10 @@ import { parse as parseYaml } from "yaml";
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
+// Claude Code's colour names.
+export const AGENT_COLORS = ["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"] as const;
+export type AgentColor = (typeof AGENT_COLORS)[number];
+
 export interface AgentDefinition {
   name: string;
   description: string;
@@ -17,21 +21,28 @@ export interface AgentDefinition {
   skills?: string[];
   omitClaudeMd?: boolean;
   codemode?: boolean; // false: this agent keeps direct tools instead of codemode-only
+  color?: AgentColor; // tints the agent's label in the panel and on its screen
+  memory?: "user" | "project" | "local"; // persistent memory directory (Claude Code's paths)
+  isolation?: "worktree"; // run in its own git worktree (the Agent call's isolation wins)
   source: string;
   inert: string[];
+  warnings: string[]; // problems that do not skip the file (an unknown colour); shown once at discovery
 }
 
 export type ParseResult = { ok: true; def: AgentDefinition } | { ok: false; reason: string };
 
 // Tier B (mapped in v2) and tier C (no effect) fields: parsed, then reported as having no effect.
 const INERT_FIELDS = [
-  "mcpServers", "isolation", "autoCompactWindow", "color",
-  "permissionMode", "hooks", "memory", "background", "initialPrompt", "experimental",
+  "mcpServers", "autoCompactWindow",
+  "permissionMode", "hooks", "background", "initialPrompt", "experimental",
 ];
 
 export const inertNotice = (field: string) => `field "${field}" has no effect in pi-pipipi`;
 
 class Skip extends Error {}
+
+// The agent name becomes a directory name and a line in .git/info/exclude.
+const isMemoryName = (name: string) => name !== "" && !name.startsWith(".") && !/[\\/\0\r\n*?[\]!#]/.test(name);
 
 // Claude Code accepts a comma-separated string or a YAML list.
 function nameList(value: unknown, field: string): string[] | undefined {
@@ -70,9 +81,18 @@ export function parseDefinition(source: string, text: string): ParseResult {
   if (name.length === 0 || name.length > 256) return { ok: false, reason: '"name" must be 1-256 characters' };
   if (name.includes(":")) return { ok: false, reason: '"name" must not contain ":"' };
   if (name.startsWith("-")) return { ok: false, reason: '"name" must not start with "-"' };
+  if (f.memory !== undefined && f.memory !== null && !isMemoryName(name)) {
+    return { ok: false, reason: `"name" ${JSON.stringify(name)} cannot be used with "memory": it becomes a directory name, so it must not be empty or start with ".", or contain a path separator, NUL, a newline or any of * ? [ ] ! #` };
+  }
   if (typeof f.description !== "string" || f.description.trim() === "") return { ok: false, reason: 'missing "description"' };
 
   try {
+    const warnings: string[] = [];
+    const rawColor = f.color;
+    const color = AGENT_COLORS.find((c) => c === rawColor);
+    if (rawColor !== undefined && rawColor !== null && color === undefined) {
+      warnings.push(`unknown color ${JSON.stringify(rawColor)} ignored (use ${AGENT_COLORS.join(", ")})`);
+    }
     const def: AgentDefinition = {
       name,
       description: f.description.trim(),
@@ -85,7 +105,11 @@ export function parseDefinition(source: string, text: string): ParseResult {
       skills: nameList(f.skills, "skills"),
       omitClaudeMd: optional<boolean>(f.omitClaudeMd, "omitClaudeMd", (v) => typeof v === "boolean", "true or false"),
       codemode: optional<boolean>(f.codemode, "codemode", (v) => typeof v === "boolean", "true or false"),
+      color,
+      memory: optional<"user" | "project" | "local">(f.memory, "memory", (v) => v === "user" || v === "project" || v === "local", "user | project | local"),
+      isolation: optional<"worktree">(f.isolation, "isolation", (v) => v === "worktree", "worktree"),
       source,
+      warnings,
       inert: INERT_FIELDS.filter((k) => k in f),
     };
     return { ok: true, def };

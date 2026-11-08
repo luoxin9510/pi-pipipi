@@ -107,6 +107,21 @@ export class PiTerminal {
     return lines.join("\n").trimEnd();
   }
 
+  // The 256-colour palette index of the foreground of the first cell of `text` on the visible rows (-1: default
+  // colour or not a palette colour); undefined when the text is not on screen.
+  fgOf(text: string): number | undefined {
+    const buf = this.term.buffer.active;
+    for (let i = 0; i < this.term.rows; i++) {
+      const line = buf.getLine(buf.viewportY + i);
+      const at = line?.translateToString(true).indexOf(text) ?? -1;
+      if (line && at >= 0) {
+        const cell = line.getCell(at)!;
+        return cell.isFgPalette() ? cell.getFgColor() : -1;
+      }
+    }
+    return undefined;
+  }
+
   // Poll the visible screen until `test` holds. No fixed sleeps: it returns as soon as the screen matches, and throws
   // with the screen contents on timeout.
   async waitFor(what: string | RegExp | ((viewport: string) => boolean), timeoutMs = 60_000): Promise<string> {

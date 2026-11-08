@@ -50,7 +50,10 @@ Invalid files are skipped with a warning.
 | `maxTurns` | The child is stopped after that many turns; the result is `partial`. |
 | `skills` | Full `SKILL.md` text preloaded into the system prompt. Searched (recursively) in `.pi/skills`, `.agents/skills`, `.claude/skills` from cwd up to the repo root, then `~/.pi/agent/skills`, `~/.agents/skills`, `~/.claude/skills`. Skill paths from settings or pi packages are not searched. |
 | `omitClaudeMd` | `--no-context-files` |
-| `mcpServers`, `isolation`, `autoCompactWindow`, `color`, `permissionMode`, `hooks`, `memory`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
+| `color` | `red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink` or `cyan` tints the agent's label in the panel and on its screen header (fixed 256-colour escapes; the status icon and text keep their status colours). Any other value warns once and is ignored. |
+| `isolation` | `worktree` runs every call of this agent in its own git worktree; the call's `isolation` wins. See [Worktree isolation](#worktree-isolation). |
+| `memory` | `user`, `project` or `local` gives the agent a persistent directory. See [Agent memory](#agent-memory). |
+| `mcpServers`, `autoCompactWindow`, `permissionMode`, `hooks`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
 
 ## Model selection
 
@@ -85,9 +88,9 @@ Without Anthropic credentials, haiku (and so every agent by default) fails with 
 
 ## The Agent tool
 
-Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume?, run_in_background? }`.
-`subagent_type` defaults to `general-purpose`. `isolation` and `name` are accepted and ignored
-with a warning. Children run as `pi --mode rpc` and get the prompt as a protocol message on stdin, not as a command
+Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume?, run_in_background?, isolation? }`.
+`subagent_type` defaults to `general-purpose`. `isolation` is `"worktree"` or omitted (see [Worktree isolation](#worktree-isolation));
+`name` is accepted and ignored with a warning. Children run as `pi --mode rpc` and get the prompt as a protocol message on stdin, not as a command
 line argument, so prompts of any size work.
 
 `run_in_background`: omitted, the first `Agent` call moves its codemode script to the background; `false` keeps the script in the foreground; `true` returns `status: "running"` at once and main gets a message when the agent ends (output cut at 8 KB), without moving the script.
@@ -106,6 +109,7 @@ Result:
   durationMs: number;
   warnings: string[];
   error?: string;       // when failed
+  worktree?: { changed: boolean; path?: string; branch?: string; files?: string[]; commits?: string[]; note?: string }; // isolation: "worktree" only
 }
 ```
 
@@ -120,6 +124,62 @@ cannot be resumed, and the subagent screen cannot show them: the panel shows a o
 `/subagents` says so. The
 `Agent` tool itself works as before. A resume without `subagent_type` reuses the agent type of the first run; a different
 `subagent_type` is an error. Children inherit the parent's project trust.
+
+## Worktree isolation
+
+`isolation: "worktree"` (in the `Agent` call or the agent file; the call wins) runs the agent in its own git worktree
+on its own branch, so it can edit freely without touching your checkout or other agents.
+
+- The worktree is `<repo>/.pi/worktrees/<agentId>` on branch `pipipi/<agentId>`, based on the main checkout's `HEAD`.
+  `/.pi/worktrees/` is added once to the repository's `info/exclude`, so worktrees never show up as untracked files.
+  Local repositories without a remote work. Outside a git repository, or in one without commits, the call throws.
+- The agent's working directory (and the `Working directory:` line in its prompt) is the worktree. When the calling
+  session's cwd is a subdirectory of the repository, it is the same subdirectory inside the worktree (if that directory
+  is not in the starting commit, the worktree root, with a warning). Uncommitted changes in your checkout are not in it:
+  the result carries a warning when there are any.
+- Files listed in `.worktreeinclude` at the repository root (gitignore syntax) are copied into the worktree, but only
+  those that are also gitignored, so tracked files are never duplicated. Directories are copied recursively.
+- When an exchange ends (completed, partial, failed or stopped), an unchanged worktree is removed with its branch. A
+  changed one is kept, and the result's `worktree` gives `path`, `branch`, `files`, `commits` and sometimes a `note`.
+  Changed means: uncommitted, untracked or new commits, or gitignored files the agent made (`dist/`, `.env`; not `.pi/`
+  and not unmodified `.worktreeinclude` copies), or HEAD no longer on `pipipi/<agentId>` (detached, another branch), or
+  a stash made on that branch; the `note` says which of the last two. Unchanged: `worktree: { changed: false }`. Nothing is committed, merged or deleted for
+  you; remove a kept one with `git worktree remove --force <path>` and `git branch -D <branch>`.
+- Resuming an agent re-enters its worktree. If the worktree was unchanged and so removed, it is recreated at the same
+  path and branch from the current `HEAD`. If you removed a changed one but its branch remains, the call throws naming
+  the path. The `isolation` of a resume call is ignored with a warning: the agent keeps how it was started.
+- A `run_in_background: true` agent that keeps a worktree reports it in its end message.
+- `/subagents worktrees` lists the kept worktrees under `<repo>/.pi/worktrees/` of the current checkout (agent id, branch, files changed, commits,
+  path) and removes the ones you pick. Before removing it asks to confirm and names what would be lost (the changed files
+  and the commits on the branch). Removal deletes the worktree and its branch. It only looks at the checkout of the current
+  directory, not at other repositories.
+
+## Agent memory
+
+`memory: user | project | local` in an agent file gives the agent a persistent directory at Claude Code's paths, so agent
+files and their memories carry over from Claude Code. `<name>` is the agent's `name` field.
+
+| Scope | Directory |
+|---|---|
+| `user` | `~/.claude/agent-memory/<name>/` |
+| `project` | `<main checkout>/.claude/agent-memory/<name>/` (meant to be committed) |
+| `local` | `<main checkout>/.claude/agent-memory-local/<name>/` (added to the repository's `info/exclude` once) |
+
+- The main checkout is the repository root of the cwd of the session that calls `Agent` (from a linked worktree, the
+  main checkout), never the agent's worktree, so
+  memory survives a removed worktree. Outside a repository `project` and `local` use that cwd, and no exclude file is written.
+- The directory is created when the agent starts. The system prompt gets a "Persistent memory" section: where the
+  directory is, how to keep `MEMORY.md` a short index, and the first 200 lines or 25000 bytes of `MEMORY.md` (whichever
+  comes first, with a note when cut). A resumed agent reads the current file.
+- Read, Write and Edit are enabled for the agent when its `tools` list lacks them. If `disallowedTools` names Write or Edit,
+  they stay denied and the other one is removed too (a `tools` list is overridden): the memory is read-only, the prompt says so
+  and the result carries a warning. A parameterised deny such as `Write(*.md)` denies the whole tool (pi has no per-path
+  rules), and the warning says so. A `MEMORY.md` that cannot be read (a directory, permissions) counts as empty, with a
+  warning. Only the tools are
+  denied: an agent that still has Bash can write the file anyway, so deny Bash too when it must not change.
+- **Risk:** an agent with memory writes files outside its working directory (`~/.claude` for `user`, the main checkout
+  for `project` and `local`), and what it saves is fed back into its prompt on later runs. Use `disallowedTools` for a
+  read-only memory, and review `project` memory before committing it.
 
 ## Watching and talking to subagents
 
@@ -154,13 +214,14 @@ drops out; running rows stay. Only subagents that ran in this pi process show as
 | `↓` / `↑` | move the selection (`↑` on the first row, or `Esc`, goes back to the editor) |
 | `Enter` | open the selected subagent's screen |
 | `x` | stop the selected subagent (nothing happens on a row that is not running) |
+| `shift+x` | stop everything of the session: every background script and every running subagent |
 
-While the panel has focus it takes `↑ ↓ Enter x Esc`. Any other key (ctrl+c, ctrl+d, text) goes to pi as usual and gives the
+While the panel has focus it takes `↑ ↓ Enter x shift+x Esc`. Any other key (ctrl+c, ctrl+d, text) goes to pi as usual and gives the
 focus back to the editor. In an in-memory session (`pi --no-session`) the panel lists no rows, only a one-line notice that
 subagents cannot be viewed.
 
 `/subagents` lists every subagent of the session, newest first, including finished ones, ones from before a `/reload`
-and ones from a resumed parent session. Pick one to open its screen.
+and ones from a resumed parent session, each with its model and effort. Pick one to open its screen, whose header also shows the model and effort. `/subagents stop` stops every running subagent and background script of the session (the notice counts them; with nothing running it says so), from anywhere. `/subagents worktrees` manages the worktrees kept by isolated agents (see [Worktree isolation](#worktree-isolation)). Any other argument warns.
 
 ### The subagent screen
 
@@ -206,8 +267,8 @@ Delegating does not block main. When a codemode script starts an `Agent`, the wh
 the `codemode` call returns to main at once ("Script moved to the background (id S1) ..."), main's turn can end, and
 you can keep talking to main. The script keeps running and keeps orchestrating (`await tools.Agent(...)` still returns
 the full result, so it can filter and combine). When it ends, main gets a message with the script's return value, its
-error if it threw, and the agents it ran (id, type, status, cost). If main is idle the message starts a new turn; if
-main is running it arrives as a steer. A return value over 8 KB is cut in the message and the full text is written to
+error if it threw, and the agents it ran (id, type, status, cost). The message is always sent as a steer that
+triggers a turn: if main is running it arrives as a steer, otherwise (idle, or compacting) a new turn starts. A return value over 8 KB is cut in the message and the full text is written to
 a file whose path the message gives (in the parent session's `subagents/<session id>/` directory).
 
 | `run_in_background` on an `Agent` call | Effect |
@@ -283,16 +344,18 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
 
 ```bash
 npm install
-npm test            # real suite (test/real) + fault suite (test/faults)
+npm test            # all seven suites below
 npm run test:real   # only the real suite
 npm run test:faults # only the fault suite: scripted fake pi (test/fake-pi.mjs), no model, free
+npm run test:memory   # memory prompt, tools and directories on fake pi: no model, free
+npm run test:worktree # worktree module and isolation on fake pi, real git on temp repos: no model, free
 npm run test:panel  # panel rows, focus rules and screen rendering against the registry: no pi, no model, free
 npm run test:parent # a real parent pi (rpc) with the codemode wrapper: background scripts, real haiku
 npm run test:tui    # drives real interactive pi in a pty (node-pty + headless xterm), real haiku
 npm run typecheck
 ```
 
-`npm test` runs all five suites (`test/real`, `test/faults`, `test/panel`, `test/tui`, `test/parent`). The `test/tui` tests start the
+`npm test` runs all seven suites (`test/real`, `test/faults`, `test/panel`, `test/tui`, `test/parent`, `test/worktree`, `test/memory`). The `test/tui` tests start the
 real `pi` with this checkout loaded and read its screen, so they are slow (about 25 to 30 s each) and each costs about a
 cent. Never run `npm test` from inside a test.
 
@@ -300,8 +363,8 @@ The real suite drives the Agent tool in-process with real children: the pinned p
 real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 146 tests (70 real, 35
-fault, 19 panel, 11 tui, 11 parent) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
+read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 231 tests (77 real, 39
+fault, 25 panel, 13 tui, 12 parent, 49 worktree, 16 memory) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
 (measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
 `usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
@@ -331,9 +394,9 @@ npm run eval -- --runs 3           # repeat, for pass rates
 npm run eval -- --only resume      # cases whose name contains "resume"
 ```
 
-`evals/cases.ts` holds 15 cases. Twelve call the tool in-process with real `pi` children (listing, read-only agents
+`evals/cases.ts` holds 17 cases. Fourteen call the tool in-process with real `pi` children (listing, read-only agents
 cannot write, custom agent tools, resume, `maxTurns`, skills, context files vs `omitClaudeMd`, model aliases, a bad
-model, no nesting, parallel runs, and a steer that changes a running subagent's course, sent through the registry handle and graded by an exact token and a file that must not appear). Three start a real parent `pi` on haiku with codemode and this checkout
+model, no nesting, parallel runs, a steer that changes a running subagent's course, sent through the registry handle and graded by an exact token and a file that must not appear, worktree isolation, and agent memory). The isolation case runs on a temp git repository: an isolated agent that writes a file keeps its worktree (the result has path, branch and the changed file, the file is in the worktree, the main checkout is clean), and an isolated read-only agent leaves no worktree or branch. The memory case uses `memory: project` in a temp repository (never `~/.claude`): run 1 saves a fact to `MEMORY.md`, and a fresh run 2 (no `resume`) answers from it. Three start a real parent `pi` on haiku with codemode and this checkout
 (`--no-extensions -e builtin:codemode -e ./src/index.ts`): one with a given script and one where the model decides to
 delegate (both pass `run_in_background: false`, since print mode would exit before a background result arrived), and one
 background case that runs a long-lived `pi --mode rpc` parent: the script's `codemode` call must return "moved to the
@@ -343,7 +406,7 @@ your settings say, and every case checks that every result (or, for the parent c
 parent and its children) ran on haiku. A case running over 5 minutes is aborted and its children stopped. Results go
 to `evals/results/` (ignored by git).
 
-Children are `pi --mode rpc` and codemode-only by default. Last run (pi 1.5.0, v3a, `--runs 3`): 45/45 over all 15 cases, $0.029 in all, 80 s wall; the background case 3/3 at $0.001 and about 14 s per run. Earlier (v2): 39/39 over 3 runs for the 13 original cases, $0.027 in all; the steer case passed 11/13 over two batches (the miss: haiku batched both steps into one codemode script, so there was nothing left to steer; $0.0005 per run). The first version of the suite found a bug that the fake-pi
+Children are `pi --mode rpc` and codemode-only by default. Last run (pi 1.5.0, v3b, `--runs 3`): 51/51 over all 17 cases, $0.037 in all, 94 s wall; the background case 3/3 at $0.001 and about 14 s per run, the isolation case 3/3 at $0.0008 and about 11 s, the memory case 3/3 at $0.0011 and about 12 s. Earlier (v2): 39/39 over 3 runs for the 13 original cases, $0.027 in all; the steer case passed 11/13 over two batches (the miss: haiku batched both steps into one codemode script, so there was nothing left to steer; $0.0005 per run). The first version of the suite found a bug that the fake-pi
 tests had missed (a run could go past `maxTurns` and still be reported `completed`), fixed since. Two checks depend on
 the model or on timing and could fail without a bug: `maxTurns` needs haiku to call a tool on its first turn, and the
 parallel case needs wall time under 0.7 × the summed run times.

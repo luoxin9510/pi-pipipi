@@ -97,6 +97,53 @@ subagent and `x` / `/stop` (they need a live stdin).
   role `user`, `assistant` (content parts `text`, `thinking`, `toolCall`) and `toolResult`. A different session format
   only affects `transcriptParts` in `src/subagent-screen.ts`.
 
+### Git (worktree isolation, `src/worktree.ts`)
+
+`isolation: "worktree"` needs only `git` on the PATH (no pi contract); a host without git can drop it. The commands, all run
+with `execFile`, never through a shell, and serialised per repository (git's own lock fails concurrent `worktree add`):
+
+| Command | For |
+|---|---|
+| `git rev-parse --show-toplevel` | the checkout of the parent's cwd; failing means "not a git repository" (the call throws) |
+| `git rev-parse --verify HEAD^{commit}` | the base commit; failing means no commits (the call throws) |
+| `git rev-parse --path-format=absolute --git-common-dir` | agent memory's root: the parent of a `.git` common dir, i.e. the main checkout even from a linked worktree (else `--show-toplevel`) |
+| `git cat-file -e <base>:<subdir>` | the parent's cwd subdirectory exists in the starting commit, so the child starts in it inside the worktree (else the root, with a warning) |
+| `git rev-parse --git-path info/exclude` | where `/.pi/worktrees/` is appended once (relative to the root; inside a linked worktree it is the shared main `.git/info/exclude`) |
+| `git status --porcelain` (main checkout) | dirty main checkout: a warning on the result |
+| `git worktree prune`, `git branch --list pipipi/<id>` | before a (re)create; an existing branch with a missing worktree is an error |
+| `git worktree add -q -b pipipi/<id> <root>/.pi/worktrees/<id> <base>` | create |
+| `git ls-files --others --ignored --exclude-from=.worktreeinclude -z`, `git check-ignore -z --stdin` | `.worktreeinclude`: pattern match, then keep only gitignored files |
+| `git status --porcelain -z --untracked-files=all --ignored`, `git symbolic-ref -q HEAD`, `git stash list --format=%gs`, `git rev-parse HEAD`, `git diff --name-only -z <base> HEAD`, `git log --format=%h\ %s <base>..HEAD` | changed or not, and what changed, after the child has exited. Changed also when gitignored files were made (not `.pi/`, not unmodified `.worktreeinclude` copies), HEAD is not `refs/heads/pipipi/<id>`, or a stash entry was made on that branch (the outcome then has a `note`) |
+| `git worktree remove --force <path>`, `git branch -D pipipi/<id>` | remove an unchanged worktree; also `/subagents worktrees` removal of a picked one |
+| `git worktree list --porcelain`, `git merge-base <worktree HEAD> <main HEAD>` | `/subagents worktrees`: the entries after the first (the main checkout) whose path is under `<root>/.pi/worktrees/` (any branch or detached), and the fork point used as the base for the change summary |
+
+Verified on git 2.54: `worktree add` works from a repository that is itself a linked worktree; with no commits `HEAD` does
+not resolve (`fatal: invalid reference: HEAD`); the exclude path from `--git-path` is the shared one in a linked worktree.
+The child gets the worktree as its cwd (`spawn` option) and in the prompt's `Working directory:` line; its session files
+stay in the parent's `subagents/<parent session id>/`. The meta file `<agentId>.json` gains
+`worktree: { root, path, branch, base }`.
+
+Failure behaviour worth copying. The per-repository lock is in-process only: two pi processes working in one repository
+are not serialised against each other (git's own lock then fails the second `worktree add`). Settling at the end of an
+exchange degrades instead of losing the run: if a git command fails there, the worktree is reported as kept with a result
+warning (path and branch given); a worktree whose directory vanished is reported as removed, with a warning, and its
+branch is left alone. A worktree removed by `/subagents worktrees` gets `removed: "user"` in the meta file's `worktree`
+object, and a resume of it throws naming the path instead of recreating it. Only an unchanged worktree removed by the
+exchange itself is recreated on resume. A foreground call aborted while its worktree was kept throws an error whose
+message ends with the kept path and branch.
+
+### Agent memory (`memory` in the agent file, `src/resolve.ts`)
+
+No pi contract; the host needs Read, Write and Edit tools (mapped through `toolMap`) and the same two `rev-parse`
+commands as above (`--show-toplevel`, `--git-path info/exclude`). Directories: `~/.claude/agent-memory/<name>/`,
+`<repository root of the parent cwd>/.claude/agent-memory/<name>/`, `.../.claude/agent-memory-local/<name>/` (outside a
+repository the parent cwd replaces the root and no exclude is written; an agent file whose `name` is unsafe as a directory name is skipped when it sets `memory`). Created
+with `mkdir -p` when the child is resolved. Local scope appends `/.claude/agent-memory-local/<name>/` to the info/exclude
+file once. The prompt gets a `# Persistent memory` section after the skills and before `# Environment`: the directory, our
+instructions (read-only wording when Write or Edit is denied) and the head of `MEMORY.md` (first 200 lines, then at most
+25000 bytes, a cut multibyte character dropped whole, plus a truncation note). `Read`, `Write`, `Edit` are added to the
+`--tools` list unless `disallowedTools` denies them; Write or Edit denied means read-only memory plus a result warning.
+
 ## 3. Extension API (parent side)
 
 | API | Where | If missing |
@@ -107,7 +154,7 @@ subagent and `x` / `/stop` (they need a live stdin).
 | `pi.on("agent_start" / "agent_end", (event, ctx))` | `src/index.ts` | pi-pipipi keeps the latest `ctx` from these and `session_start`; without them the note to main and main's state on the screen use the context of session start, which a reload replaces |
 | `pi.getSettings()` keeping the unknown `pipipi` key | `src/config.ts` | defaults only (replace with your own config source) |
 | `pi.registerCommand(name, { handler(args, ctx: ExtensionCommandContext) })` | `/subagents` | no `/subagents` |
-| `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })`; also `{ triggerTurn: true }` for a background script's result | the note to main, the background script message | main is not told about your exchanges |
+| `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })`; `{ triggerTurn: true, deliverAs: "steer" }` for a background script's or detached agent's result | the note to main, the background script message | main is not told about your exchanges |
 | `ctx.cwd`, `ctx.model {provider,id}` (may be undefined: `inherit` then throws), `ctx.thinkingLevel`, `ctx.isProjectTrusted()`, `ctx.isIdle()` | `src/agent-tool.ts`, `src/index.ts` | `inherit`, thinking and trust mirroring, the note's delivery |
 | `ctx.hasUI`, `ctx.ui.notify` | `src/index.ts` | gates the panel, discovery warnings and background scripts; false = tool only, no UI, scripts stay in the foreground (print mode exits at turn end) |
 | `ctx.sessionManager.getSessionFile()` / `getSessionId()` | sessions, registry | children run `--no-session`, no resume. The session dir must be writable: pi-pipipi writes `subagents/` there and rebuilds its list from it on every `session_start` (startup, reload, resume, new) |
@@ -133,8 +180,7 @@ under other names, replace the import paths (`grep -rn "@earendil-works" src`), 
   `AbortController`, and returns early with its own result when the script starts an `Agent`; the script goes on using
   the original `ctx` (`ctx.executeTool`) after the call and main's turn have ended. It relies on: nested tool call ids
   `<codemode call id>/<n>` (the owner of an `Agent` call is found by that prefix), `ctx.executeTool` working after the
-  tool call returned, and `pi.sendMessage(msg, { triggerTurn: true })` starting a run when main is idle (`{ deliverAs: "steer" }`
-  when it runs). `run_in_background: true` agents run detached from the call's signal and report with the same `sendMessage` delivery. Without them, no background scripts: set `pipipi.backgroundScripts: false` and pi's own codemode runs unwrapped (v2 behaviour).
+  tool call returned, and `pi.sendMessage(msg, { triggerTurn: true })` starting a run when main is not running. pi-pipipi always sends results as `{ triggerTurn: true, deliverAs: "steer" }`: pi routes it itself (streaming: steer; idle or compacting: a run starts, deferred while the previous run settles), so a result is never only appended while main sleeps. A throwing delivery is logged with `console.error`, never rethrown. `run_in_background: true` agents run detached from the call's signal and report with the same `sendMessage` delivery. Without them, no background scripts: set `pipipi.backgroundScripts: false` and pi's own codemode runs unwrapped (v2 behaviour).
   Also needed: `createCodemodeExtension` exported from the package index (the wrapper cannot be built without it) and
   `ctx.ui.onTerminalInput` for ctrl+b (see layer 5; without a TUI, scripts move to the background only by starting an `Agent`).
   Esc aborts main's signal: the wrapper links it to the script only while the script is in the foreground, so background
@@ -153,9 +199,10 @@ Only needed for the panel and the subagent screen.
 | `tui.focusedComponent` (not public API) | the panel acts only while the editor (a component with `getText`) has focus | if your TUI renames it, the panel may steal keys from pickers: fix `focusedIsEditor` in `src/panel.ts` |
 | `ctx.ui.getEditorText()` | ↓ only on an empty editor; ctrl+b moves foreground scripts to the background only when the editor is empty | |
 | `ctx.ui.custom(factory, { overlay: true, overlayOptions })`, full width and height; `tui.terminal.rows` | the subagent screen (it draws exactly the terminal's rows; its commands: `/main`, `/model`, `/stop`) | must not stop main's run; pi's `switchSession` would, so it is not used. The screen is `Focusable` and gets keys through `handleInput` (pi filters key releases for components) |
-| `ctx.ui.select`, `ctx.ui.notify` | `/subagents`, notices | |
+| `ctx.ui.select`, `ctx.ui.confirm`, `ctx.ui.notify`, `ctx.cwd` | `/subagents`, `/subagents worktrees` (the confirm names what removal loses), notices | |
 | pi components `AssistantMessageComponent`, `UserMessageComponent`, `ToolExecutionComponent`, `getMarkdownTheme`; pi-tui `Input`, `Text`, the `TUI`, `Component` and `Focusable` types, `matchesKey`, `isKeyRelease`, `truncateToWidth` | the transcript, the screen, the panel | |
 | `theme.fg/bg/bold`; colour names `accent`, `success`, `error`, `warning`, `muted`, `dim`, `toolTitle`, `selectedBg` | panel and screen | a theme must define them (pi's built-in themes do) |
+| raw 256-colour SGR escapes `\x1b[38;5;<n>m` ... `\x1b[39m` (palette in `src/color.ts`) | agent `color`: panel row label and screen header | the host's TUI must pass SGR through; without it the label shows escape text, so drop the `color` field |
 
 ### Without pi's TUI
 

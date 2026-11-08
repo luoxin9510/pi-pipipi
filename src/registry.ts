@@ -8,6 +8,7 @@ import { applyEvent, type LiveMessage } from "./live.ts";
 import type { ParentContext } from "./resolve.ts";
 import { addUsage, type ChildEvent, type ChildHandle, emptyUsage, type Progress, type RunResult, type Status, type Usage } from "./runner.ts";
 import { subagentSessionDir } from "./sessions.ts";
+import type { WorktreeRef } from "./worktree.ts";
 
 export type SubagentStatus = Status | "running" | "stopped";
 
@@ -34,11 +35,16 @@ export interface SubagentRecord {
   endedAt?: number; // end of the latest exchange; unset while running
   model: string; // as resolved for the latest exchange ("" for v1 meta files)
   thinking: string;
+  color?: string; // the agent definition's colour name, if any
   sessionDir?: string; // where the child session and meta file live; unset for an in-memory parent
+  worktree?: WorktreeRef; // set when the subagent is isolated: where it runs and the commit it started from
 }
 
 // "type(description)", or the type alone.
 export const label = (r: Pick<SubagentRecord, "type" | "description">): string => (r.description ? `${r.type}(${r.description})` : r.type);
+
+// "model · effort", leaving out what the record does not have (older meta files have no model).
+export const modelInfo = (r: Pick<SubagentRecord, "model" | "thinking">): string => [r.model, r.thinking].filter((s) => s !== "").join(" · ");
 
 export interface SubagentStart {
   id: string;
@@ -46,6 +52,8 @@ export interface SubagentStart {
   description: string;
   model: string;
   thinking: string;
+  color?: string;
+  worktree?: WorktreeRef; // omit the key (not undefined) for a non-isolated exchange: a resume keeps the stored one
 }
 
 // The file keeps v1's `agentType` key so older versions still read it.
@@ -129,6 +137,7 @@ class Registry {
   // Stop these subagents (those not running are skipped) and resolve when every one has ended. Each ends failed /
   // "stopped by user" as with `stop`.
   async stopAll(ids: string[]): Promise<void> {
+    this.abortQueued(ids);
     const stopped = ids.filter((id) => this.stop(id));
     if (stopped.length === 0) return;
     await new Promise<void>((resolve) => {
@@ -140,6 +149,31 @@ class Registry {
       const unsubscribe = this.subscribe(check);
       check();
     });
+  }
+
+  // Detached (run_in_background) agents run on their own signal; this keeps it so a stop reaches one that is still
+  // waiting for its turn or a slot (it has no child to abort yet).
+  private detached = new Map<string, { controller: AbortController; sessionId: string }>();
+
+  detach(id: string, sessionId: string, controller: AbortController): void {
+    this.detached.set(id, { controller, sessionId });
+  }
+
+  forget(id: string): void {
+    this.detached.delete(id);
+  }
+
+  // Abort these detached agents if they have not started a child; a running one is stopped through its child instead.
+  abortQueued(ids: string[]): void {
+    for (const id of ids) {
+      const d = this.detached.get(id);
+      if (d && !this.handles.has(id) && this.records.get(id)?.status !== "running") d.controller.abort();
+    }
+  }
+
+  // Every detached agent of the session still waiting (session end, stop all).
+  abortQueuedOf(sessionId: string): void {
+    this.abortQueued([...this.detached].filter(([, d]) => d.sessionId === sessionId).map(([id]) => id));
   }
 
   // True once, if a stop was requested for the exchange that just ended.
@@ -233,7 +267,9 @@ class Registry {
         endedAt: ended ? mtime : meta.endedAt,
         model: meta.model ?? "",
         thinking: meta.thinking ?? "",
+        color: meta.color,
         sessionDir: dir,
+        ...(meta.worktree ? { worktree: meta.worktree } : {}),
       });
     }
     this.emit();
@@ -260,6 +296,14 @@ class Registry {
     this.records.set(start.id, record);
     this.writeMeta(record);
     this.emit();
+  }
+
+  // `/subagents worktrees` removed the subagent's worktree and branch: a resume must not recreate it.
+  markWorktreeRemoved(id: string): void {
+    const old = this.records.get(id);
+    if (!old?.worktree) return;
+    const record = this.update(id, { worktree: { ...old.worktree, removed: "user" } });
+    this.writeMeta(record);
   }
 
   attach(id: string, handle: ChildHandle): void {

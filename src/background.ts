@@ -22,8 +22,8 @@ export interface ScriptRecord {
 
 class ScriptRegistry {
   private scripts = new Map<string, ScriptRecord>();
-  private movers = new Map<string, () => void>(); // callId -> move this foreground script to the background
-  private stoppers = new Map<string, () => Promise<void>>(); // callId -> stop this running script
+  private movers = new Map<string, () => void>(); // script id -> move this foreground script to the background
+  private stoppers = new Map<string, () => Promise<void>>(); // script id -> stop this running script
   private listeners = new Set<() => void>();
   private counter = 0;
   private keepEnded = 50; // ended scripts kept for the panel's linger; older ones are dropped
@@ -36,9 +36,10 @@ class ScriptRegistry {
     return this.scripts.get(id);
   }
 
-  // The script whose codemode call id prefixes this tool call id (nested ids are "<codemode id>/<n>").
+  // The script whose codemode call id prefixes this tool call id (nested ids are "<codemode id>/<n>"). A provider may
+  // reuse call ids: the newest active script wins.
   owner(toolCallId: string): ScriptRecord | undefined {
-    return [...this.scripts.values()].find((s) => (s.state === "foreground" || s.state === "background") && toolCallId.startsWith(`${s.callId}/`));
+    return [...this.scripts.values()].reverse().find((s) => (s.state === "foreground" || s.state === "background") && toolCallId.startsWith(`${s.callId}/`));
   }
 
   subscribe(listener: () => void): () => void {
@@ -49,8 +50,8 @@ class ScriptRegistry {
   start(callId: string, sessionId: string, move: () => void, stop: () => Promise<void>): ScriptRecord {
     const script: ScriptRecord = { id: `S${++this.counter}`, callId, sessionId, state: "foreground", stopRequested: false, pinned: false, agents: [], startedAt: Date.now() };
     this.scripts.set(script.id, script);
-    this.movers.set(callId, move);
-    this.stoppers.set(callId, stop);
+    this.movers.set(script.id, move);
+    this.stoppers.set(script.id, stop);
     this.changed();
     return script;
   }
@@ -62,7 +63,7 @@ class ScriptRegistry {
     if (!script) return;
     if (script.stopRequested) throw new Error(`script ${script.id} is being stopped`);
     if (runInBackground === false) script.pinned = true;
-    else if (runInBackground === undefined && script.state === "foreground" && !script.pinned) this.movers.get(script.callId)!();
+    else if (runInBackground === undefined && script.state === "foreground" && !script.pinned) this.movers.get(script.id)!();
   }
 
   addAgent(toolCallId: string, agentId: string): void {
@@ -76,8 +77,8 @@ class ScriptRegistry {
     script.state = state;
     if (state !== "foreground" && state !== "background") {
       script.endedAt = Date.now();
-      this.movers.delete(script.callId);
-      this.stoppers.delete(script.callId);
+      this.movers.delete(script.id);
+      this.stoppers.delete(script.id);
       const ended = [...this.scripts.values()].filter((x) => x.endedAt !== undefined);
       for (const old of ended.slice(0, Math.max(0, ended.length - this.keepEnded))) this.scripts.delete(old.id);
     }
@@ -88,7 +89,7 @@ class ScriptRegistry {
   background(id: string): boolean {
     const script = this.scripts.get(id);
     if (!script || script.state !== "foreground") return false;
-    this.movers.get(script.callId)!();
+    this.movers.get(script.id)!();
     return true;
   }
 
@@ -101,7 +102,7 @@ class ScriptRegistry {
   // script is aborted and ends `stopped`; main gets the usual end message. False when the script is not running.
   async stop(id: string): Promise<boolean> {
     const script = this.scripts.get(id);
-    const stopper = script && this.stoppers.get(script.callId);
+    const stopper = script && this.stoppers.get(script.id);
     if (!stopper) return false;
     await stopper();
     return true;
@@ -202,8 +203,12 @@ export function installBackground(
         }
       }
       const ended = (result?: any, err?: Error) => {
-        const { state, text, allFailed } = settle(result, err);
-        deliver(endMessage(script, state, text, parent, allFailed));
+        try {
+          const { state, text, allFailed } = settle(result, err);
+          deliver(endMessage(script, state, text, parent, allFailed));
+        } catch (e) {
+          console.error(`pi-pipipi: could not deliver the end of script ${script.id}: ${(e as Error).message}`); // never crash pi
+        }
       };
       run.then((result: any) => ended(result), (err: Error) => ended(undefined, err));
       return { content: [{ type: "text", text: BACKGROUND_TEXT(script.id) }] };

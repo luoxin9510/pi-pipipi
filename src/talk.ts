@@ -4,6 +4,7 @@ import { discoverAgents } from "./discovery.ts";
 import { exchange, getHost, recordSteer } from "./exchange.ts";
 import { registry } from "./registry.ts";
 import { type ParentContext, resolveChild } from "./resolve.ts";
+import { memoryRoot } from "./worktree.ts";
 
 export type Delivery = "steered" | "queued" | "started";
 
@@ -19,12 +20,15 @@ export function talkTo(parent: ParentContext, id: string, text: string): { deliv
   const queued = registry.busy(id);
   const def = discoverAgents(parent.cwd).agents.get(r.type);
   if (!def) throw new Error(`cannot continue ${id}: agent "${r.type}" no longer exists`);
-  const spec = resolveChild(
-    def,
-    { description: r.description, prompt: text, resume: id, model: r.model || undefined, effort: r.thinking || undefined },
-    getHost().config(),
-    parent,
-  );
-  const done = exchange(parent, spec, { type: r.type, description: r.description, said: text }, undefined, () => {}).then(() => {});
+  const done = (async () => {
+    const spec = resolveChild(
+      def,
+      { description: r.description, prompt: text, resume: id, model: r.model || undefined, effort: r.thinking || undefined },
+      getHost().config(),
+      parent,
+      { worktree: r.worktree && { ...r.worktree }, memoryRoot: await memoryRoot(def.memory, def.name, parent.cwd) }, // an isolated subagent continues in its worktree
+    );
+    await exchange(parent, spec, { type: r.type, description: r.description, color: def.color, said: text }, undefined, () => {});
+  })();
   return { delivery: queued ? "queued" : "started", done };
 }

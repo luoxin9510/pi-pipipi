@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ParentContext } from "./resolve.ts";
+import type { WorktreeRef } from "./worktree.ts";
 
 type SessionRef = Pick<ParentContext, "sessionFile" | "sessionId">;
 
@@ -17,13 +18,14 @@ function agentMetaFile(parent: ParentContext, agentId: string): string {
   return join(subagentSessionDir(parent), `${agentId}.json`);
 }
 
-// The agentType a resumable run was started with. Throws for anything that cannot be resumed.
-export function storedAgentType(parent: ParentContext, resume: string): string {
-  if (!/^[A-Za-z0-9._-]+$/.test(resume)) throw new Error(`invalid resume id "${resume}"`);
+// What a resumable run was started with: its agentType and the worktree it ran in, if isolated. Throws for anything that
+// cannot be resumed.
+export function storedAgent(parent: ParentContext, resume: string): { agentType: string; worktree?: WorktreeRef } {
+  if (!/^[A-Za-z0-9._-]+$/.test(resume) || /^\.+$/.test(resume)) throw new Error(`invalid resume id "${resume}"`);
   if (!parent.sessionFile) throw new Error("resume needs a persisted parent session");
   const file = agentMetaFile(parent, resume);
   if (!existsSync(file)) throw new Error(`no subagent session "${resume}" to resume`);
-  return (JSON.parse(readFileSync(file, "utf8")) as { agentType: string }).agentType;
+  return JSON.parse(readFileSync(file, "utf8"));
 }
 
 export function newAgentId(): string {

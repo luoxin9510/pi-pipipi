@@ -2,7 +2,7 @@
 // Scripted stand-in for `pi --mode rpc`.
 // FAKE_PI_SCENARIO: path to JSON { lines: string[] (raw stdout lines), exitCode?, stderr?, delayMs?, hang?, sessionFile?,
 //   promptError?: string (answer the prompt command with success: false), abortSettles?: boolean (answer rpc abort with
-//   agent_settled aborted: true) }
+//   agent_settled aborted: true, writeFile?: string (a file name to create in the child's cwd when the prompt arrives)) }
 // Like pi, it waits for a `prompt` command on stdin, answers it with a response, then plays the lines. Without `hang` it
 // exits after the lines; with `hang` it stays up and ignores stdin closing.
 // FAKE_PI_RECORD: path where argv, PIPIPI_DEPTH, the system prompt text and the commands received are written as JSON.
@@ -52,6 +52,7 @@ rl.on("line", async (line) => {
   }
   if (cmd.type !== "prompt" || played) return;
   played = true;
+  if (scenario.writeFile) writeFileSync(scenario.writeFile, "written by the fake child\n"); // relative to the child's cwd
   if (scenario.promptError) {
     out({ id: cmd.id, type: "response", command: "prompt", success: false, error: scenario.promptError });
   } else {

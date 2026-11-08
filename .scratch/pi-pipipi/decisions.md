@@ -183,3 +183,16 @@ v3b — later:
     into `.git/info/exclude`.
 12. Polish: `color` on panel rows and the screen header; model and effort on the screen and in `/subagents`;
     `/subagents stop` (all) and a shortcut.
+
+### Grill 4 addendum (2026-11-08): v3b gaps, all as recommended
+
+1. Resume after an unchanged worktree was removed: recreate it at the same path and branch from the main checkout's
+   current HEAD; a changed one removed by the user is an error naming the path.
+2. Resume ignores the call's `isolation` (the stored one wins, with a warning).
+3. `.worktreeinclude`: gitignore syntax, only files also matched by `.gitignore` are copied.
+4. Memory outside a git repo: `project`/`local` use the parent's cwd; no `info/exclude` write.
+5. `color`: Claude Code's eight names mapped to fixed 256-colour escapes; unknown values warn once.
+6. Stop all: `shift+x` while the panel is focused, `/subagents stop` anywhere; no global key.
+7. `/subagents stop` also stops background scripts.
+8. Session end / reload while an exchange runs: same end-of-exchange check (unchanged removed, changed kept).
+9. `/subagents worktrees` looks only at the current cwd's main checkout.

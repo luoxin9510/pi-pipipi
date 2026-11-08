@@ -7,6 +7,7 @@ import type { Config } from "./config.ts";
 import type { ParentContext, ChildSpec } from "./resolve.ts";
 import { registry } from "./registry.ts";
 import { type Progress, runChild, type RunResult } from "./runner.ts";
+import { ensureWorktree, settleWorktree, type WorktreeOutcome } from "./worktree.ts";
 
 // Process-wide: every session in this pi process shares the limit, which the first session's config fixes.
 class Semaphore {
@@ -80,7 +81,26 @@ export function noteText(type: string, id: string, said: string[], run: RunResul
 export interface ExchangeInfo {
   type: string;
   description: string;
+  color?: string;
   said?: string; // the user's message that started this exchange
+}
+
+// After the child has exited: an unchanged worktree is removed with its branch, a changed one stays. A git failure here
+// must not lose the run: the worktree is then reported as kept, with a warning.
+async function settle(spec: ChildSpec): Promise<{ worktree?: WorktreeOutcome }> {
+  const ref = spec.worktree;
+  if (!ref) return {};
+  try {
+    const outcome = await settleWorktree(ref);
+    if (outcome.changed === false && outcome.gone) {
+      spec.warnings.push(`worktree ${ref.path} no longer existed when the run ended (removed by someone else); branch ${ref.branch} was left as it is`);
+      return { worktree: { changed: false } };
+    }
+    return { worktree: outcome };
+  } catch (err) {
+    spec.warnings.push(`could not inspect or clean up worktree ${ref.path}: ${(err as Error).message}`);
+    return { worktree: { changed: true, path: ref.path, branch: ref.branch, files: [], commits: [] } };
+  }
 }
 
 export async function exchange(
@@ -89,12 +109,27 @@ export async function exchange(
   info: ExchangeInfo,
   signal: AbortSignal | undefined,
   onProgress: (p: Progress) => void,
-): Promise<RunResult> {
+): Promise<RunResult & { worktree?: WorktreeOutcome }> {
   const id = spec.agentId;
   return registry.turn(id, signal, async () => {
     await slots.acquire(signal);
     try {
-      registry.begin(parent, { id, type: info.type, description: info.description, model: spec.model, thinking: spec.thinking });
+      // Created once the slot is ours and before anything is recorded: a git failure leaves no subagent and no child.
+      if (spec.worktree) spec.warnings.push(...(await ensureWorktree(spec.worktree)));
+      try {
+        registry.begin(parent, {
+          id,
+          type: info.type,
+          description: info.description,
+          model: spec.model,
+          thinking: spec.thinking,
+          color: info.color,
+          ...(spec.worktree ? { worktree: spec.worktree } : {}),
+        });
+      } catch (err) {
+        await settle(spec); // the worktree exists but no child will run in it
+        throw err;
+      }
       let run: RunResult;
       try {
         run = await runChild(
@@ -109,10 +144,14 @@ export async function exchange(
         );
       } catch (err) {
         // runChild rejects only when its caller aborted
+        const left = await settle(spec);
         registry.finish(id, "stopped");
         userSteers.delete(id);
+        // The call throws, so the result's `worktree` is lost: the error carries where the kept one is.
+        if (left.worktree?.changed && err instanceof Error) err.message += `; worktree kept: ${left.worktree.path} (branch ${left.worktree.branch})`;
         throw err;
       }
+      const kept = await settle(spec);
       // A stop request that lands after the run finished by itself leaves the run as it was.
       if (registry.stopRequested(id) && run.aborted) {
         run = { ...run, status: "failed", error: "stopped by user" };
@@ -121,7 +160,7 @@ export async function exchange(
       const said = [...(info.said === undefined ? [] : [info.said]), ...(userSteers.get(id) ?? [])];
       userSteers.delete(id);
       if (said.length > 0) host!.note(noteText(info.type, id, said, run));
-      return run;
+      return { ...run, ...kept };
     } finally {
       slots.release();
     }
