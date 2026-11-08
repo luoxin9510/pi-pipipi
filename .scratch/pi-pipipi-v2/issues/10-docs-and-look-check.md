@@ -4,10 +4,10 @@
 
 **Blocked by:** 08, 09
 
-**Status:** ready-for-human
+**Status:** closed (done 2026-11-08)
 
 - [x] README and AGENTS.md updated; the v1 `@file` note removed
-- [ ] The owner has tried the panel and the subagent screen and recorded the result in Comments
+- [x] The owner has tried the panel and the subagent screen and recorded the result in Comments
 
 ## Comments
 
@@ -50,3 +50,5 @@
 - Smells skipped: moving the semaphore out of `exchange.ts` (documented in AGENTS.md instead; only exchanges use it).
 
 2026-11-08 (owner look check, round 1): the panel and screen show; but ↓ could not select the first row, only the second. Cause: kitty-protocol terminals send a key release after each press, and pi passes releases to input listeners (not to components); the release of the focusing ↓ moved the selection. Fixed in e9dc05d (releases ignored, swallowed while focused), unit + pty test (press + release). Waiting for the owner to retry.
+
+2026-11-08 (owner look check, round 2): after the key-release fix the owner reports the panel and screen look right. Closed.
