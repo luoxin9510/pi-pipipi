@@ -48,7 +48,7 @@ test("typing to a finished subagent continues it: the answer streams onto the sc
 
     pi.submit("/main");
     await pi.waitGone("main ›");
-    await pi.waitFor(/It replied: 391/, 30_000);
+    await pi.waitFor(/It replied:[^\n]*391/, 30_000); // haiku sometimes answers "17 × 23 = 391"
     assert.doesNotMatch(pi.viewport(), /Working/, "an idle main did not start a turn for the note");
   });
 });

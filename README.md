@@ -163,7 +163,8 @@ files and their memories carry over from Claude Code. `<name>` is the agent's `n
   directory is, how to keep `MEMORY.md` a short index, and the first 200 lines or 25000 bytes of `MEMORY.md` (whichever
   comes first, with a note when cut). A resumed agent reads the current file.
 - Read, Write and Edit are enabled for the agent when its `tools` list lacks them. If `disallowedTools` names Write or Edit,
-  they stay denied: the memory is read-only, the prompt says so and the result carries a warning.
+  they stay denied: the memory is read-only, the prompt says so and the result carries a warning. Only the tools are
+  denied: an agent that still has Bash can write the file anyway, so deny Bash too when it must not change.
 - **Risk:** an agent with memory writes files outside its working directory (`~/.claude` for `user`, the main checkout
   for `project` and `local`), and what it saves is fed back into its prompt on later runs. Use `disallowedTools` for a
   read-only memory, and review `project` memory before committing it.

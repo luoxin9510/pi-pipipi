@@ -38,7 +38,8 @@ test("an agent writes a note into its memory directory and a later run sees it",
 });
 
 test("an agent whose disallowedTools denies Write cannot change its memory", async () => {
-  const { s, dir, file } = setup("memory: project\ndisallowedTools: Write, Edit");
+  // Bash is denied too: with it the agent can still write the file (README, Agent memory).
+  const { s, dir, file } = setup("memory: project\ndisallowedTools: Write, Edit, Bash");
   writeFileSync(file, "- original\n");
   const t = await loadTool({}, { cwd: s.repo });
   const r = await t.result({ subagent_type: "x", prompt: "Replace the contents of MEMORY.md in your memory directory with the single line 'changed'. If you cannot, say so." });
