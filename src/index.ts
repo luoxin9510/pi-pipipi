@@ -1,6 +1,7 @@
 // pi-pipipi extension entry: register the `Agent` tool for codemode scripts.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { installBackground } from "./background.ts";
 import { agentTool, describeAgents, parentContext } from "./agent-tool.ts";
 import { type Config, readConfig } from "./config.ts";
 import { discoverAgents } from "./discovery.ts";
@@ -20,6 +21,12 @@ export default function pipipi(pi: ExtensionAPI) {
   const track = (_event: unknown, ctx: ExtensionContext) => {
     current = ctx;
   };
+
+  // Wraps codemode so a script that starts an Agent moves to the background (the backgroundScripts config key is ticket 03).
+  // Delivery to main: a turn starts when it is idle, a steer when it runs.
+  installBackground(pi, (content) =>
+    pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" }),
+  );
 
   pi.registerCommand("subagents", { description: "List this session's subagents", handler: (_args, ctx) => subagentsCommand(ctx) });
   pi.on("agent_start", track);

@@ -3,6 +3,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type JsonValue, StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+import { scripts } from "./background.ts";
 import type { Config } from "./config.ts";
 import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
@@ -76,6 +77,7 @@ async function executeAgent(
   onUpdate: ((text: string) => void) | undefined,
   config: Config,
   parent: ParentContext,
+  toolCallId: string,
 ): Promise<AgentResult> {
   let agentType = input.subagent_type;
   if (input.resume !== undefined) {
@@ -91,6 +93,7 @@ async function executeAgent(
   if (!def) throw new Error(`unknown subagent_type "${agentType}". Available: ${[...agents.keys()].join(", ")}`);
 
   const spec = resolveChild(def, input as CallInput, config, parent);
+  scripts.addAgent(toolCallId, spec.agentId);
   for (const field of ["run_in_background", "isolation", "name"] as const) {
     if (input[field] !== undefined) spec.warnings.push(`"${field}" is not supported and was ignored`);
   }
@@ -115,18 +118,20 @@ export function agentTool(getConfig: () => Config, description: string) {
     parameters,
     outputSchema,
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: AgentInput,
       signal: AbortSignal | undefined,
       onUpdate: ((r: { content: { type: "text"; text: string }[]; details: AgentResult | undefined }) => void) | undefined,
       ctx: ExtensionContext,
     ) {
+      scripts.agentStarting(toolCallId); // the first Agent call moves its script to the background
       const result = await executeAgent(
         params,
         signal,
         (text) => onUpdate?.({ content: [{ type: "text", text }], details: undefined }),
         getConfig(),
         parentContext(ctx),
+        toolCallId,
       );
       return {
         content: [{ type: "text" as const, text: summary(result) }],

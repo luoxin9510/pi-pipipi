@@ -104,7 +104,7 @@ subagent and `x` / `/stop` (they need a live stdin).
 | `pi.on("agent_start" / "agent_end", (event, ctx))` | `src/index.ts` | pi-pipipi keeps the latest `ctx` from these and `session_start`; without them the note to main and main's state on the screen use the context of session start, which a reload replaces |
 | `pi.getSettings()` keeping the unknown `pipipi` key | `src/config.ts` | defaults only (replace with your own config source) |
 | `pi.registerCommand(name, { handler(args, ctx: ExtensionCommandContext) })` | `/subagents` | no `/subagents` |
-| `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })` | the note to main | main is not told about your exchanges |
+| `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })`; also `{ triggerTurn: true }` for a background script's result | the note to main, the background script message | main is not told about your exchanges |
 | `ctx.cwd`, `ctx.model {provider,id}` (may be undefined: `inherit` then throws), `ctx.thinkingLevel`, `ctx.isProjectTrusted()`, `ctx.isIdle()` | `src/agent-tool.ts`, `src/index.ts` | `inherit`, thinking and trust mirroring, the note's delivery |
 | `ctx.hasUI`, `ctx.ui.notify` | `src/index.ts` | gates the panel and discovery warnings; false = tool only, no UI |
 | `ctx.sessionManager.getSessionFile()` / `getSessionId()` | sessions, registry | children run `--no-session`, no resume. The session dir must be writable: pi-pipipi writes `subagents/` there and rebuilds its list from it on every `session_start` (startup, reload, resume, new) |
@@ -123,6 +123,15 @@ under other names, replace the import paths (`grep -rn "@earendil-works" src`), 
   `createCodemodeExtension({ mode: "only" })` from the package index. pi then skips its built-in codemode extension
   (an extension that registers the same tool replaces a built-in one). Without that export or that replacement rule,
   set `"childCodemode": "inherit"`: children get direct tools, as in v1.
+- Background scripts (`src/background.ts`): in a parent, pi-pipipi builds pi's codemode tool with the exported
+  `createCodemodeExtension()` against a proxy `pi` that captures `registerTool`, then registers `{ ...definition, execute }`
+  under the same name (so `renderCall`/`renderResult`, `exposure`, `defaultActive` and the user's `codemode` settings are
+  kept, and pi skips its built-in with a stderr warning). The wrapper runs the original `execute` with its own
+  `AbortController`, and returns early with its own result when the script starts an `Agent`; the script goes on using
+  the original `ctx` (`ctx.executeTool`) after the call and main's turn have ended. It relies on: nested tool call ids
+  `<codemode call id>/<n>` (the owner of an `Agent` call is found by that prefix), `ctx.executeTool` working after the
+  tool call returned, and `pi.sendMessage(msg, { triggerTurn: true })` starting a run when main is idle (`{ deliverAs: "steer" }`
+  when it runs). Without them, no background scripts (the planned `pipipi.backgroundScripts: false` is v2 behaviour).
 - With codemode-only, an agent's `tools` list must also bind inside scripts. On pi 1.5.0 it does (a script calling a
   tool outside `--tools` gets "does not exist"). Check yours with `test/real/09-codemode-only.test.ts`.
 
