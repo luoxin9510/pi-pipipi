@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,7 @@ export interface Scenario {
   sessionFile?: string;
   promptError?: string; // answer the prompt command with success: false
   abortSettles?: boolean; // answer an rpc abort with agent_settled aborted: true
+  writeFile?: string; // create this file in the child's cwd when the prompt arrives
 }
 
 // A temp repo (with .git) and a temp HOME, so discovery never sees the real user dirs.
@@ -64,6 +66,21 @@ export function sandbox() {
       return JSON.parse(readFileSync(recordFile, "utf8"));
     },
   };
+}
+
+// Turn a directory into a real repository with one commit (a file `a.txt`); replaces the empty `.git` the sandboxes make.
+export function initRepo(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  rmSync(join(dir, ".git"), { recursive: true, force: true });
+  const run = (...args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+  run("init", "-q", "-b", "main");
+  run("config", "user.name", "Test");
+  run("config", "user.email", "test@example.com");
+  run("config", "commit.gpgsign", "false");
+  writeFileSync(join(dir, "a.txt"), "a\n");
+  run("add", "a.txt");
+  run("commit", "-q", "-m", "first");
+  return dir;
 }
 
 export function agentFile(fields: string, body = "You are a test agent.") {

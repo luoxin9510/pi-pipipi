@@ -9,7 +9,8 @@ import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ChildSpec, type ParentContext, resolveChild } from "./resolve.ts";
 import { exchange } from "./exchange.ts";
-import { capText, storedAgentType } from "./sessions.ts";
+import { capText, newAgentId, storedAgent } from "./sessions.ts";
+import { planWorktree, type WorktreeOutcome, type WorktreeRef } from "./worktree.ts";
 import { emptyUsage, type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
@@ -22,7 +23,7 @@ const parameters = Type.Object({
   effort: Type.Optional(StringEnum(EFFORTS, { description: "Thinking level override" })),
   resume: Type.Optional(Type.String({ description: "agentId from an earlier result, to continue that agent's session. subagent_type may be omitted." })),
   run_in_background: Type.Optional(Type.Boolean({ description: "true: return at once with status \"running\"; the agent's result arrives later as a message. false: wait for the agent and keep this script in the foreground. Omitted: wait for the agent, and the script moves to the background." })),
-  isolation: Type.Optional(Type.String({ description: "Not supported; ignored" })),
+  isolation: Type.Optional(Type.String({ description: '"worktree": run the agent in its own git worktree on its own branch. Unchanged, it is removed when the run ends; with changes it is kept and the result names its path, branch, changed files and commits. Default: the agent file\'s isolation, else none.' })),
   name: Type.Optional(Type.String({ description: "Not supported; ignored" })),
 });
 export type AgentInput = Static<typeof parameters>;
@@ -38,6 +39,18 @@ export const outputSchema = Type.Object({
   durationMs: Type.Number(),
   warnings: Type.Array(Type.String()),
   error: Type.Optional(Type.String()),
+  worktree: Type.Optional(
+    Type.Object(
+      {
+        changed: Type.Boolean({ description: "false: nothing was changed and the worktree and its branch were removed" }),
+        path: Type.Optional(Type.String()),
+        branch: Type.Optional(Type.String()),
+        files: Type.Optional(Type.Array(Type.String(), { description: "changed files (uncommitted, untracked and committed)" })),
+        commits: Type.Optional(Type.Array(Type.String(), { description: 'commits made since the worktree was created, "<hash> <subject>"' })),
+      },
+      { description: 'Only for isolation "worktree"' },
+    ),
+  ),
 });
 export type AgentResult = Omit<Static<typeof outputSchema>, "status"> & { status: Status | "running" };
 
@@ -84,10 +97,24 @@ export function parentContext(ctx: ExtensionContext): ParentContext {
   };
 }
 
+const SHOWN = 20; // files and commits listed in the text main reads; the structured result has them all
+
+// The lines telling main where a kept worktree is. Nothing for a removed one.
+export function worktreeLines(w: WorktreeOutcome | undefined): string[] {
+  if (!w?.changed) return [];
+  const more = (list: string[]) => (list.length > SHOWN ? [`  ... and ${list.length - SHOWN} more`] : []);
+  return [
+    `Worktree kept: ${w.path} (branch ${w.branch})`,
+    ...(w.files.length > 0 ? ["Changed files:", ...w.files.slice(0, SHOWN).map((f) => `  ${f}`), ...more(w.files)] : []),
+    ...(w.commits.length > 0 ? ["Commits:", ...w.commits.slice(0, SHOWN).map((c) => `  ${c}`), ...more(w.commits)] : []),
+  ];
+}
+
 function summary(r: AgentResult): string {
   const head = `${r.agentType} ${r.status} (agentId ${r.agentId}, ${r.turns} turns, ${(r.durationMs / 1000).toFixed(1)}s)`;
   const lines = [head, ...r.warnings.map((w) => `warning: ${w}`)];
   if (r.error) lines.push(`error: ${r.error}`);
+  lines.push(...worktreeLines(r.worktree as WorktreeOutcome | undefined));
   return [...lines, "", r.output].join("\n");
 }
 
@@ -98,26 +125,37 @@ async function executeAgent(
   config: Config,
   parent: ParentContext,
   toolCallId: string,
-  started?: (spec: ChildSpec) => void, // called synchronously, before the first await, once the spec is resolved
+  started?: (spec: ChildSpec) => void, // called once the spec is resolved, before the agent is queued
 ): Promise<AgentResult> {
+  if (input.isolation !== undefined && input.isolation !== "worktree") {
+    throw new Error(`invalid isolation "${input.isolation}": only "worktree" is supported`);
+  }
   let agentType = input.subagent_type;
+  let stored: ReturnType<typeof storedAgent> | undefined;
   if (input.resume !== undefined) {
-    const stored = storedAgentType(parent, input.resume);
-    if (agentType !== undefined && agentType !== stored) {
-      throw new Error(`agent "${input.resume}" is a "${stored}" agent; resume it with that subagent_type or none`);
+    stored = storedAgent(parent, input.resume);
+    if (agentType !== undefined && agentType !== stored.agentType) {
+      throw new Error(`agent "${input.resume}" is a "${stored.agentType}" agent; resume it with that subagent_type or none`);
     }
-    agentType = stored;
+    agentType = stored.agentType;
   }
   agentType ??= DEFAULT_AGENT;
   const { agents } = discoverAgents(parent.cwd);
   const def = agents.get(agentType);
   if (!def) throw new Error(`unknown subagent_type "${agentType}". Available: ${[...agents.keys()].join(", ")}`);
 
-  const spec = resolveChild(def, input as CallInput, config, parent);
+  // Isolation: a resume uses the stored worktree (or none) whatever is asked now; a new agent, the call's value else the file's.
+  const agentId = input.resume ?? newAgentId();
+  let worktree: WorktreeRef | undefined;
+  if (stored) worktree = stored.worktree;
+  else if ((input.isolation ?? def.isolation) === "worktree") worktree = await planWorktree(parent.cwd, agentId);
+
+  const spec = resolveChild(def, input as CallInput, config, parent, { agentId, worktree });
   scripts.addAgent(toolCallId, spec.agentId);
-  for (const field of ["isolation", "name"] as const) {
-    if (input[field] !== undefined) spec.warnings.push(`"${field}" is not supported and was ignored`);
+  if (stored && input.isolation !== undefined) {
+    spec.warnings.push(`"isolation" was ignored on a resume: the agent keeps how it was started (${worktree ? "in a worktree" : "without isolation"})`);
   }
+  if (input.name !== undefined) spec.warnings.push('"name" is not supported and was ignored');
   for (const field of def.inert) spec.warnings.push(inertNotice(field));
   started?.(spec);
 
@@ -138,6 +176,7 @@ export function agentEndMessage(parent: ParentContext, agentId: string, agentTyp
   return [
     `Background agent ${agentId} ${agentType} ${r?.status ?? "stopped"} ($${(r?.usage.cost.total ?? 0).toFixed(4)}).`,
     ...(err ? [`Error: ${err}`] : []),
+    ...worktreeLines(r?.worktree as WorktreeOutcome | undefined),
     `Output:\n${cut}`,
   ].join("\n");
 }
@@ -161,10 +200,12 @@ export function agentTool(getConfig: () => Config, description: string, deliver:
       const parent = parentContext(ctx);
       if (params.run_in_background === true && ctx.hasUI) {
         // The agent runs on its own, not tied to this call's signal; main hears of its end by message.
-        let spec: ChildSpec | undefined;
-        const run = executeAgent(params, new AbortController().signal, undefined, getConfig(), parent, toolCallId, (s) => (spec = s));
-        if (!spec) await run; // it failed before starting (unknown agent, bad resume...): throws here
-        const { agentId, model, warnings } = spec!;
+        let run!: Promise<AgentResult>;
+        const spec = await new Promise<ChildSpec>((resolve, reject) => {
+          run = executeAgent(params, new AbortController().signal, undefined, getConfig(), parent, toolCallId, resolve);
+          run.then(() => {}, reject); // it failed before starting (unknown agent, bad resume, no repository...): throws here
+        });
+        const { agentId, model, warnings } = spec;
         const agentType = params.subagent_type ?? DEFAULT_AGENT;
         run.then(
           (r) => deliver(agentEndMessage(parent, agentId, r.agentType, r)),

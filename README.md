@@ -50,7 +50,8 @@ Invalid files are skipped with a warning.
 | `maxTurns` | The child is stopped after that many turns; the result is `partial`. |
 | `skills` | Full `SKILL.md` text preloaded into the system prompt. Searched (recursively) in `.pi/skills`, `.agents/skills`, `.claude/skills` from cwd up to the repo root, then `~/.pi/agent/skills`, `~/.agents/skills`, `~/.claude/skills`. Skill paths from settings or pi packages are not searched. |
 | `omitClaudeMd` | `--no-context-files` |
-| `mcpServers`, `isolation`, `autoCompactWindow`, `color`, `permissionMode`, `hooks`, `memory`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
+| `isolation` | `worktree` runs every call of this agent in its own git worktree; the call's `isolation` wins. See [Worktree isolation](#worktree-isolation). |
+| `mcpServers`, `autoCompactWindow`, `color`, `permissionMode`, `hooks`, `memory`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
 
 ## Model selection
 
@@ -85,9 +86,9 @@ Without Anthropic credentials, haiku (and so every agent by default) fails with 
 
 ## The Agent tool
 
-Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume?, run_in_background? }`.
-`subagent_type` defaults to `general-purpose`. `isolation` and `name` are accepted and ignored
-with a warning. Children run as `pi --mode rpc` and get the prompt as a protocol message on stdin, not as a command
+Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume?, run_in_background?, isolation? }`.
+`subagent_type` defaults to `general-purpose`. `isolation` is `"worktree"` or omitted (see [Worktree isolation](#worktree-isolation));
+`name` is accepted and ignored with a warning. Children run as `pi --mode rpc` and get the prompt as a protocol message on stdin, not as a command
 line argument, so prompts of any size work.
 
 `run_in_background`: omitted, the first `Agent` call moves its codemode script to the background; `false` keeps the script in the foreground; `true` returns `status: "running"` at once and main gets a message when the agent ends (output cut at 8 KB), without moving the script.
@@ -106,6 +107,7 @@ Result:
   durationMs: number;
   warnings: string[];
   error?: string;       // when failed
+  worktree?: { changed: boolean; path?: string; branch?: string; files?: string[]; commits?: string[] }; // isolation: "worktree" only
 }
 ```
 
@@ -120,6 +122,27 @@ cannot be resumed, and the subagent screen cannot show them: the panel shows a o
 `/subagents` says so. The
 `Agent` tool itself works as before. A resume without `subagent_type` reuses the agent type of the first run; a different
 `subagent_type` is an error. Children inherit the parent's project trust.
+
+## Worktree isolation
+
+`isolation: "worktree"` (in the `Agent` call or the agent file; the call wins) runs the agent in its own git worktree
+on its own branch, so it can edit freely without touching your checkout or other agents.
+
+- The worktree is `<repo>/.pi/worktrees/<agentId>` on branch `pipipi/<agentId>`, based on the main checkout's `HEAD`.
+  `/.pi/worktrees/` is added once to the repository's `info/exclude`, so worktrees never show up as untracked files.
+  Local repositories without a remote work. Outside a git repository, or in one without commits, the call throws.
+- The agent's working directory (and the `Working directory:` line in its prompt) is the worktree. Uncommitted changes in
+  your checkout are not in it: the result carries a warning when there are any.
+- Files listed in `.worktreeinclude` at the repository root (gitignore syntax) are copied into the worktree, but only
+  those that are also gitignored, so tracked files are never duplicated. Directories are copied recursively.
+- When an exchange ends (completed, partial, failed or stopped), an unchanged worktree is removed with its branch. A
+  changed one (uncommitted or untracked files, or new commits) is kept, and the result's `worktree` gives `path`,
+  `branch`, `files` and `commits`. Unchanged: `worktree: { changed: false }`. Nothing is committed, merged or deleted for
+  you; remove a kept one with `git worktree remove --force <path>` and `git branch -D <branch>`.
+- Resuming an agent re-enters its worktree. If the worktree was unchanged and so removed, it is recreated at the same
+  path and branch from the current `HEAD`. If you removed a changed one but its branch remains, the call throws naming
+  the path. The `isolation` of a resume call is ignored with a warning: the agent keeps how it was started.
+- A `run_in_background: true` agent that keeps a worktree reports it in its end message.
 
 ## Watching and talking to subagents
 
@@ -286,6 +309,7 @@ npm install
 npm test            # real suite (test/real) + fault suite (test/faults)
 npm run test:real   # only the real suite
 npm run test:faults # only the fault suite: scripted fake pi (test/fake-pi.mjs), no model, free
+npm run test:worktree # worktree module and isolation on fake pi, real git on temp repos: no model, free
 npm run test:panel  # panel rows, focus rules and screen rendering against the registry: no pi, no model, free
 npm run test:parent # a real parent pi (rpc) with the codemode wrapper: background scripts, real haiku
 npm run test:tui    # drives real interactive pi in a pty (node-pty + headless xterm), real haiku

@@ -5,6 +5,7 @@ import type { Config } from "./config.ts";
 import type { AgentDefinition, Effort } from "./definition.ts";
 import { newAgentId, subagentSessionDir } from "./sessions.ts";
 import { findSkill } from "./skills.ts";
+import type { WorktreeRef } from "./worktree.ts";
 
 export interface CallInput {
   description: string;
@@ -36,6 +37,13 @@ export interface ChildSpec {
   maxTurns?: number;
   agentId: string;
   warnings: string[];
+  worktree?: WorktreeRef; // isolation: the child's cwd is its path; the exchange creates and settles it
+}
+
+// What the caller decided before resolving: the new agent's id (a worktree path needs it) and the worktree to run in.
+export interface ResolveOptions {
+  agentId?: string;
+  worktree?: WorktreeRef;
 }
 
 // Registers `codemode` in mode "only"; pi swaps its built-in codemode extension for it.
@@ -98,11 +106,12 @@ function resolveTools(def: AgentDefinition, config: Config, codemode: boolean): 
   return { args, warnings };
 }
 
-function buildSystemPrompt(def: AgentDefinition, cwd: string, now: Date, codemode: boolean): { text: string; warnings: string[] } {
+// `parentCwd` is where skills are looked up; `cwd` is the child's working directory (a worktree when isolated).
+function buildSystemPrompt(def: AgentDefinition, parentCwd: string, cwd: string, now: Date, codemode: boolean): { text: string; warnings: string[] } {
   const parts = [def.prompt];
   const warnings: string[] = [];
   for (const name of def.skills ?? []) {
-    const text = findSkill(name, cwd);
+    const text = findSkill(name, parentCwd);
     if (text === undefined) warnings.push(`skill "${name}" not found`);
     else parts.push(`# Skill: ${name}\n\n${text.trim()}`);
   }
@@ -123,15 +132,17 @@ export function resolveChild(
   input: CallInput,
   config: Config,
   parent: ParentContext,
+  options: ResolveOptions = {},
 ): ChildSpec {
   const model = resolveModel(input, def, config, parent);
   const thinking = input.effort ?? def.effort ?? parent.thinking;
   const codemode = config.childCodemode === "only" && def.codemode !== false;
   const tools = resolveTools(def, config, codemode);
-  const system = buildSystemPrompt(def, parent.cwd, new Date(), codemode);
+  const cwd = options.worktree?.path ?? parent.cwd;
+  const system = buildSystemPrompt(def, parent.cwd, cwd, new Date(), codemode);
 
   // A resume id was already checked by storedAgentType().
-  const agentId = input.resume ?? newAgentId();
+  const agentId = input.resume ?? options.agentId ?? newAgentId();
   const session = parent.sessionFile ? ["--session-dir", subagentSessionDir(parent), "--session-id", agentId] : ["--no-session"];
 
   const args = [
@@ -149,7 +160,7 @@ export function resolveChild(
     command: config.piCommand,
     args,
     env: { ...(process.env as Record<string, string>), PIPIPI_DEPTH: "1" },
-    cwd: parent.cwd,
+    cwd,
     systemPrompt: system.text,
     prompt: input.prompt,
     model,
@@ -157,5 +168,6 @@ export function resolveChild(
     maxTurns: def.maxTurns,
     agentId,
     warnings: [...tools.warnings, ...system.warnings],
+    worktree: options.worktree,
   };
 }
