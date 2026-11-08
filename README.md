@@ -265,7 +265,7 @@ real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
 read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 110 tests (70 real, 18
-fault, 14 panel, 8 tui) in about 1.5 to 2 min wall, files in parallel. The in-process real suite costs about $0.02 per run
+fault, 14 panel, 8 tui) in 40 s to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
 (measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
 `usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
