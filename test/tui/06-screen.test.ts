@@ -24,7 +24,7 @@ test("opening a running subagent shows its transcript growing while main runs; m
 
     // the task is there at once; the subagent's script and then its result are added while the screen is open
     assert.doesNotMatch(pi.viewport(), /Script completed/);
-    await pi.waitFor(/code: .*tools\.bash/s, 60_000);
+    await pi.waitFor(/tools\.bash/, 60_000);
     await pi.waitFor(/Script completed/, 60_000);
 
     // leave: main's own view is back, and its run completes with its final reply

@@ -4,8 +4,11 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFi
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import pipipi from "../../src/index.ts";
 import type { AgentResult } from "../../src/agent-tool.ts";
+
+initTheme("dark"); // the stub ui builds the subagent screen, whose components need pi's theme
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PI = join(ROOT, "node_modules", ".bin", "pi");
@@ -64,6 +67,7 @@ interface Ctx {
 export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
   const tools: Record<string, any> = {};
   const commands: Record<string, any> = {};
+  const screens: string[] = []; // header line of each subagent screen opened
   const menus: { title: string; options: string[] }[] = [];
   const handlers: Record<string, Function[]> = {};
   const notes: string[] = c.notes ?? [];
@@ -83,11 +87,20 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
       notify: (m: string) => notes.push(m),
       setWidget: () => {},
       onTerminalInput: () => () => {},
+      // Build the component like pi would (fake tui and theme), record what it draws, leave at once.
+      custom: (factory: any) => {
+        const theme = { fg: (_c: string, x: string) => x, bg: (_c: string, x: string) => x, bold: (x: string) => x };
+        const component = factory({ terminal: { rows: 24 }, requestRender() {} }, theme, {}, () => {});
+        screens.push(component.render(100)[0]);
+        component.dispose();
+        return Promise.resolve();
+      },
       select: async (title: string, options: string[]) => {
         menus.push({ title, options });
         return c.pick?.(options);
       },
     },
+    isIdle: () => true,
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-haiku-5-5" },
     thinkingLevel: c.thinkingLevel ?? "off",
     isProjectTrusted: () => c.trusted ?? true,
@@ -101,6 +114,7 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
     notes,
     updates,
     menus,
+    screens,
     sessionId,
     command: (name: string, args = "") => commands[name].handler(args, ctx),
     registered: tool !== undefined,

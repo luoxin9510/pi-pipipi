@@ -29,11 +29,19 @@ export function sessionFileOf(r: SubagentRecord): string | undefined {
   return name && join(r.sessionDir, name);
 }
 
-// A call is drawn as its name and its arguments, strings as they are: pi's default prints a codemode script as one JSON
-// line, and its own renderers for the registered tools are not reachable from an extension.
+// A call is drawn as its name and its arguments. A codemode script is shown alone as code, line by line; other strings
+// are shown as they are (a multi-line one starts on its own line). Pi's default prints the script as one JSON line, and
+// its own renderers for the registered tools are not reachable from an extension.
 const callRenderers = (name: string): ToolRenderers => ({
   renderCall: (args: unknown, theme: Theme) => {
-    const fields = Object.entries((args ?? {}) as Record<string, unknown>).map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v, null, 2)}`);
+    const a = (args ?? {}) as Record<string, unknown>;
+    const fields =
+      name === "codemode" && typeof a.code === "string"
+        ? [a.code]
+        : Object.entries(a).map(([k, v]) => {
+            const text = typeof v === "string" ? v : JSON.stringify(v, null, 2);
+            return text.includes("\n") ? `${k}:\n${text}` : `${k}: ${text}`;
+          });
     return new Text([theme.fg("toolTitle", theme.bold(name)), ...fields.map((f) => theme.fg("muted", f))].join("\n"), 0, 0);
   },
 });
@@ -150,7 +158,7 @@ export class SubagentScreen implements Component, Focusable {
     const what = r.description ? `${r.type}(${r.description})` : r.type;
     const main = this.mainIdle() ? t.fg("muted", "main: idle") : t.fg("accent", "main: running");
     const sub = `${ICONS[r.status] ?? "?"} ${r.status} · ${r.turns} turns`;
-    const head = truncateToWidth(` ${t.fg("muted", "main ›")} ${t.bold(what)}   ${main} · ${t.fg("muted", sub)}`, width);
+    const head = truncateToWidth(` ${t.fg("accent", "‹ main")} ${t.fg("dim", "(esc or /main)")} ${t.fg("muted", "·  main ›")} ${t.bold(what)}   ${main} · ${t.fg("muted", sub)}`, width);
     const rule = t.fg("dim", "─".repeat(width));
 
     const height = Math.max(1, rows - 5);

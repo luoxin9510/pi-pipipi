@@ -80,7 +80,8 @@ test("after a fresh load the registry is rebuilt from meta files: finished runs,
   assert.ok(options[0]!.endsWith(b.agentId));
   assert.match(options[1]!, /Explore\(first job\)/);
   assert.match(options[2]!, /general-purpose · 0 turns · v1agent0000$/);
-  assert.match(t2.notes.at(-1)!, new RegExp(`Explore ${a.agentId}`), "choosing a row only notifies for now");
+  assert.equal(t2.screens.length, 1, "choosing a row opens its subagent screen");
+  assert.match(t2.screens[0]!, /Explore\(first job\)/);
 
   // Resume through the rebuilt registry: same record, totals add up, still second in line.
   const again = await t2.result({ resume: a.agentId, prompt: REPLY_OK });

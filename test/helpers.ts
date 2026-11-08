@@ -95,7 +95,7 @@ export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
   const ctx = {
     cwd: c.cwd,
     hasUI: true,
-    ui: { notify: (m: string) => notes.push(m), setWidget: () => {}, onTerminalInput: () => () => {} },
+    ui: { notify: (m: string) => notes.push(m), setWidget: () => {}, onTerminalInput: () => () => {}, custom: async () => {} },
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-opus-5-5" },
     thinkingLevel: c.thinkingLevel ?? "medium",
     isProjectTrusted: () => c.trusted ?? true,

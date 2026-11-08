@@ -50,7 +50,9 @@ test("header, the user task, a codemode call with its script and result, and liv
   appendFileSync(file, assistant("a1", "u1", [{ type: "toolCall", id: "c1", name: "codemode", arguments: { code: "const a = await tools.bash({command: 'ls'});\nreturn a;" } }]));
   text = screen.render(100).join("\n");
   assert.match(text, /codemode/);
-  assert.match(text, /code: const a = await tools\.bash/);
+  assert.match(text, /const a = await tools\.bash/);
+  assert.doesNotMatch(text, /code:/, "the script is shown as code, not as a field");
+  assert.match(text, /‹ main/);
   const plain = text.replace(/\x1b\[[0-9;]*m/g, "");
   assert.match(plain, /\n return a;\s*\n/, "the script keeps its line breaks");
 
