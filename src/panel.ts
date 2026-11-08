@@ -90,6 +90,7 @@ export class Panel {
     else if (matchesKey(data, "up")) this.selected--;
     else if (matchesKey(data, "down")) this.selected = Math.min(this.selected + 1, rows.length - 1);
     else if (matchesKey(data, "enter")) this.open(rows[this.selected]!);
+    else if (data === "x") registry.stop(rows[this.selected]!.id); // a row that is not running: nothing to stop
     this.requestRender();
     return true; // while focused the panel swallows every key, so nothing reaches the editor
   }
@@ -108,7 +109,7 @@ export class Panel {
       const line = truncateToWidth(`${selected ? "▸" : " "} ${parts.join(" · ")}`, width);
       lines.push(selected ? t.bg("selectedBg", line) : line);
     });
-    if (this.focused) lines.push(t.fg("dim", "↑↓ select · enter open · esc back to editor"));
+    if (this.focused) lines.push(t.fg("dim", "↑↓ select · enter open · x stop · esc back to editor"));
     return lines;
   }
 

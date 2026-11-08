@@ -102,11 +102,15 @@ export async function exchange(
           (handle) => registry.attach(id, handle),
         );
       } catch (err) {
+        registry.wasStopped(id);
         registry.finish(id, "stopped"); // the caller aborted
         steers.delete(id);
         throw err;
       }
-      registry.finish(id, run.status, run);
+      if (registry.wasStopped(id)) {
+        run = { ...run, status: "failed", error: "stopped by user" };
+        registry.finish(id, "stopped", run);
+      } else registry.finish(id, run.status, run);
       const said = [...(info.said === undefined ? [] : [info.said]), ...(steers.get(id) ?? [])];
       steers.delete(id);
       if (said.length > 0) bound!.note(noteText(info.type, id, said, run));

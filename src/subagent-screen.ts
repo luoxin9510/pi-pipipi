@@ -78,6 +78,12 @@ export function transcriptParts(file: string, tui: TUI, cwd: string): Component[
 
 const ICONS: Record<string, string> = { running: "●", completed: "✓", partial: "◐", failed: "✗", stopped: "■" };
 
+// The models a subagent can be switched to ("provider/id"). The picker is drawn on the screen itself: a dialog from
+// ctx.ui.select would sit under this overlay.
+export interface ModelChoice {
+  list(): string[];
+}
+
 export class SubagentScreen implements Component, Focusable {
   private input = new Input();
   private parts: Component[] = [];
@@ -95,8 +101,11 @@ export class SubagentScreen implements Component, Focusable {
   private mainIdle: () => boolean;
   private parent: ParentContext;
   private done: () => void;
+  private models: ModelChoice | undefined;
+  private picking: { options: string[]; at: number } | undefined; // the open /model list
 
-  constructor(tui: TUI, theme: Theme, id: string, mainIdle: () => boolean, parent: ParentContext, done: () => void) {
+  constructor(tui: TUI, theme: Theme, id: string, mainIdle: () => boolean, parent: ParentContext, done: () => void, models?: ModelChoice) {
+    this.models = models;
     this.tui = tui;
     this.theme = theme;
     this.id = id;
@@ -119,8 +128,31 @@ export class SubagentScreen implements Component, Focusable {
   private submit(text: string): void {
     this.input.setValue("");
     if (text === "/main") return this.done();
-    if (text.startsWith("/")) this.notice = `${text.split(/\s/)[0]} is not available on a subagent screen (/main goes back)`;
+    const [command, arg] = [text.split(/\s/)[0], text.slice(text.split(/\s/)[0]!.length).trim()];
+    if (command === "/stop") this.stop();
+    else if (command === "/model") void this.model(arg);
+    else if (text.startsWith("/")) this.notice = `${text.split(/\s/)[0]} is not available on a subagent screen (/main goes back)`;
     else if (text) this.say(text);
+  }
+
+  private stop(): void {
+    this.notice = registry.stop(this.id) ? "stopping..." : "the subagent is not running";
+    this.tui.requestRender();
+  }
+
+  // `/model` picks from the available models; `/model provider/id` names one. Applied now if the subagent runs, and
+  // used by its later exchanges. The agent file is not touched.
+  private async model(arg: string): Promise<void> {
+    const available = this.models?.list() ?? [];
+    if (!arg) {
+      if (available.length === 0) this.notice = "no model list available";
+      else this.picking = { options: available, at: Math.max(0, available.indexOf(registry.get(this.id)!.model)) };
+    } else if (!available.includes(arg)) this.notice = `unknown model ${arg}`;
+    else {
+      const error = await registry.setModel(this.id, arg);
+      this.notice = error === undefined ? `model: ${arg}` : `could not switch to ${arg}: ${error}`;
+    }
+    this.tui.requestRender();
   }
 
   // Steer the subagent, or continue it; the reply shows up as the session file grows.
@@ -143,6 +175,16 @@ export class SubagentScreen implements Component, Focusable {
   handleInput(data: string): void {
     const page = Math.max(1, this.tui.terminal.rows - 6);
     this.notice = "";
+    if (this.picking) {
+      const p = this.picking;
+      if (matchesKey(data, "up")) p.at = Math.max(0, p.at - 1);
+      else if (matchesKey(data, "down")) p.at = Math.min(p.options.length - 1, p.at + 1);
+      else if (matchesKey(data, "enter")) {
+        this.picking = undefined;
+        void this.model(p.options[p.at]!);
+      } else if (matchesKey(data, "escape")) this.picking = undefined;
+      return this.tui.requestRender();
+    }
     if (matchesKey(data, "escape")) return this.done();
     if (matchesKey(data, "pageUp")) this.offset += page;
     else if (matchesKey(data, "pageDown")) this.offset = Math.max(0, this.offset - page);
@@ -186,8 +228,15 @@ export class SubagentScreen implements Component, Focusable {
     const end = this.lines.length - this.offset;
     const body = this.lines.slice(Math.max(0, end - height), end).map((l) => truncateToWidth(l, width));
     while (body.length < height) body.push("");
+    if (this.picking) {
+      const { options, at } = this.picking;
+      const first = Math.max(0, Math.min(at - Math.floor(height / 2), options.length - (height - 1)));
+      const shown = options.slice(first, first + height - 1).map((o, i) => (first + i === at ? t.fg("accent", `▸ ${o}`) : `  ${o}`));
+      body.splice(0, body.length, t.fg("muted", ` Model for ${r.type}`), ...shown.map((l) => ` ${l}`));
+      while (body.length < height) body.push("");
+    }
     const scrolled = this.offset > 0 ? ` · ${this.offset} lines above the end` : "";
-    const hint = this.notice || `↑↓ pgup/pgdn scroll${scrolled} · esc or /main back to main`;
+    const hint = this.picking ? "↑↓ choose · enter apply · esc cancel" : this.notice || `↑↓ pgup/pgdn scroll${scrolled} · /stop /model · esc or /main back to main`;
     return [head, rule, ...body, rule, ...this.input.render(width), t.fg("dim", truncateToWidth(` ${hint}`, width))].slice(0, rows);
   }
 
@@ -207,7 +256,9 @@ let current: Promise<void> | undefined;
 export function openSubagentScreen(ctx: ExtensionContext, r: SubagentRecord): Promise<void> {
   if (current) return current;
   current = ctx.ui
-    .custom<void>((tui, theme, _kb, done) => new SubagentScreen(tui, theme, r.id, () => ctx.isIdle(), parentContext(ctx), () => done()), {
+    .custom<void>((tui, theme, _kb, done) => new SubagentScreen(tui, theme, r.id, () => ctx.isIdle(), parentContext(ctx), () => done(), {
+        list: () => ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`),
+      }), {
       overlay: true,
       overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left" },
     })

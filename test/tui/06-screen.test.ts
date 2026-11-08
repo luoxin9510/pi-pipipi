@@ -57,8 +57,8 @@ test("a finished subagent shows its full transcript, scrolls to the task, reject
     pi.press("end");
     await pi.waitFor((s) => /Script completed/.test(s) && !s.includes("lines above the end"));
 
-    pi.submit("/model");
-    await pi.waitFor("/model is not available on a subagent screen");
+    pi.submit("/nonsense");
+    await pi.waitFor("/nonsense is not available on a subagent screen");
     assert.match(pi.viewport(), HEAD);
 
     pi.submit("/main");
