@@ -28,6 +28,8 @@ test("the panel lists both running subagents, updates them, takes focus, and dro
 
     // ↓ on the empty editor focuses the panel; the first row is selected and the hint shows. Kitty-protocol terminals
     // follow every press with a release (CSI 1;1:3B), which must not move the selection on to the second row.
+    pi.press("down"); // the script row comes first
+    pi.type("\x1b[1;1:3B");
     pi.press("down");
     pi.type("\x1b[1;1:3B");
     let v = await pi.waitFor("esc back to editor");
@@ -36,7 +38,7 @@ test("the panel lists both running subagents, updates them, takes focus, and dro
     assert.match(v, /▸ .*sleepy one/);
     pi.press("down");
     v = await pi.waitFor((s) => /▸ .*sleepy two/.test(s));
-    pi.press("up", "up"); // second -> first -> above the first: back to the editor
+    pi.press("up", "up", "up"); // second -> first -> the script row -> above the first: back to the editor
     await pi.waitGone("esc back to editor");
 
     // a key the panel does not use goes to the editor and gives the focus back

@@ -24,12 +24,15 @@ screen, rpc and codemode-only children). Tickets: `.scratch/pi-pipipi/issues/`, 
   meta files, stop, set model, status icons/colours/label, the running child's events and in-progress message),
   `live.ts` (rebuilds the message being written from rpc deltas), `panel.ts` (panel below the editor),
   `subagent-screen.ts` (full-screen view), `talk.ts` (what the user types on the screen: steer or continue, a thin
-  layer over `exchange`), `subagents-command.ts`, `child-codemode.ts` (codemode-only extension loaded by children).
+  layer over `exchange`), `subagents-command.ts`, `child-codemode.ts` (codemode-only extension loaded by children), `background.ts` (the `codemode`
+  wrapper that moves scripts starting an `Agent` to the background, the script registry, ctrl+b and the end message).
 - `src/builtin/*.md` built-in agents in Claude Code format.
 - `test/real/*.test.ts` node:test against real pi and real haiku; `test/faults/*.test.ts` scripted faults on fake pi.
   `npm test` runs these and the two below (Node >= 22.18 strips types).
-- `test/panel/*.test.ts` panel rows, focus rules and screen rendering against the registry (no pi, no model). `test/tui/*.test.ts` drive real
-  interactive pi in a pty (`test/tui/harness.ts`: node-pty + headless xterm); real haiku, few and time-bounded.
+- `test/panel/*.test.ts` panel rows (`scripts.test.ts`: script rows, `x`, ctrl+b against the script registry), focus rules and screen rendering against the registry (no pi, no model). `test/tui/*.test.ts` drive real
+  interactive pi in a pty (`test/tui/harness.ts`: node-pty + headless xterm); real haiku, few and time-bounded (`10-script-panel.test.ts`: script rows, `x` on a script, ctrl+b).
+- `test/parent/*.test.ts` drive a real parent `pi --mode rpc` with this checkout (`test/parent/helpers.ts` `startParent`): the
+  seam for the codemode wrapper and background scripts. Real haiku.
 - Two helper files: `test/helpers.ts` is the fake-pi harness (fault suite: scripted streams, `loadTool` against `test/fake-pi.mjs`);
   `test/real/helpers.ts` is the real-pi harness (temp repo/HOME/agent dir, pinned pi on haiku, the screen/`say` stubs).
 - `test/fake-pi.mjs` stands in for the `pi` binary in the fault suite (and `npm run stress -- --fake`).

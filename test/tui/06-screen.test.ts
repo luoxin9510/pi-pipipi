@@ -18,7 +18,7 @@ test("opening a running subagent shows its transcript growing while main runs; m
     pi.submit(SCRIPT);
     await pi.waitFor(PANEL_ROW, 90_000);
 
-    pi.press("down", "enter");
+    pi.press("down", "down", "enter"); // the script row comes first
     const v = await pi.waitFor((s) => HEAD.test(s) && s.includes("main: running"));
     assert.match(v, /esc or \/main back to main/);
 

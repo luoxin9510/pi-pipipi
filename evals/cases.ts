@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { registry } from "../src/registry.ts";
-import { check, childAgents, costOf, directTool, type EvalCase, fixture, HAIKU, onHaiku, parentOnHaiku, runParent } from "./harness.ts";
+import { check, childAgents, costOf, directTool, type EvalCase, fixture, HAIKU, messageText, onHaiku, parentOnHaiku, runParent, runRpcParent } from "./harness.ts";
 
 const agent = (fields: string, body: string) => `---\n${fields}\n---\n${body}\n`;
 
@@ -281,8 +281,8 @@ export const cases: EvalCase[] = [
         cwd,
         `Use the codemode tool. Script:
 const [x, y] = await Promise.all([
-  tools.Agent({ description: "count", prompt: "How many files are in src? Reply with the number only.", subagent_type: "Explore" }),
-  tools.Agent({ description: "find", prompt: "Which file defines findMe? Reply with the path only.", subagent_type: "Explore" }),
+  tools.Agent({ description: "count", prompt: "How many files are in src? Reply with the number only.", subagent_type: "Explore", run_in_background: false }),
+  tools.Agent({ description: "find", prompt: "Which file defines findMe? Reply with the path only.", subagent_type: "Explore", run_in_background: false }),
 ]);
 return { statuses: [x.status, y.status], models: [x.model, y.model], count: x.output, file: y.output };
 Reply with the returned JSON only.`,
@@ -316,7 +316,7 @@ Reply with the returned JSON only.`,
       const cwd = fixture(files);
       const r = await runParent(
         cwd,
-        "Find which file defines the function quuxFrobnicate. Delegate the search to an Explore subagent (tools.Agent from a codemode script) instead of searching yourself. Answer with the file path only.",
+        "Find which file defines the function quuxFrobnicate. Delegate the search to an Explore subagent (tools.Agent from a codemode script) instead of searching yourself; this run is non-interactive, so pass run_in_background: false and use the result in the same turn. Answer with the file path only.",
         signal,
       );
       const kids = childAgents(r.sessionDir);
@@ -327,6 +327,36 @@ Reply with the returned JSON only.`,
           check("used Agent", r.tools.includes("Agent"), r.tools),
           check("an Explore child ran", Object.values(kids).includes("Explore"), kids),
           check("answers lib/mod7.ts", r.text.includes("mod7.ts"), r.text),
+          parentOnHaiku(r.models),
+        ],
+      };
+    },
+  },
+  {
+    name: "background script frees main",
+    kind: "parent",
+    async run(signal) {
+      const cwd = fixture();
+      const script = `const r = await tools.Agent({ description: "slow", prompt: "Run the bash command \`sleep 5\` then reply with the word DONE" });
+return "TOK-" + (6 * 7) + " " + r.status;`;
+      const prompt = `Call the codemode tool exactly once with exactly this code:\n\`\`\`js\n${script}\n\`\`\`\nIf it says the script moved to the background, reply "moved" and stop. When the script's result arrives, reply with its return value verbatim.`;
+      const isAnswer = (e: { type: string; message?: any }) => e.type === "message_end" && e.message.role === "assistant" && messageText(e.message).includes("TOK-42");
+      const r = await runRpcParent(cwd, prompt, (events) => events.some(isAnswer), signal);
+      const ev = r.events;
+      const codemodeEnd = ev.find((e) => e.type === "tool_execution_end" && e.toolName === "codemode" && !e.parentToolCallId);
+      const agentEnd = ev.find((e) => e.type === "tool_execution_end" && e.toolName === "Agent");
+      const settled = ev.find((e) => e.type === "agent_settled");
+      const message = ev.find((e) => e.type === "message_end" && e.message.role === "custom" && messageText(e.message).includes("Background script S1"));
+      const answer = ev.find(isAnswer);
+      return {
+        cost: r.cost,
+        checks: [
+          check("did not time out", !r.timedOut, ev.map((e) => e.type)),
+          check("codemode returned 'moved to the background'", /moved to the background/.test(messageText({ content: codemodeEnd?.result?.content })), codemodeEnd?.result),
+          check("main's turn ended while the agent ran", !!settled && !!agentEnd && settled.at < agentEnd.at, { settled: settled?.at, agentEnd: agentEnd?.at }),
+          check("result message arrived with the token", !!message && messageText(message.message).includes("TOK-42 completed"), message && messageText(message.message)),
+          check("the message started a new turn", !!message && !!settled && ev.slice(0, ev.indexOf(message)).some((e) => e.type === "agent_start" && e.at > settled.at), ev.map((e) => e.type)),
+          check("main's final answer uses the result", !!answer && !!message && answer.at > message.at, answer && messageText(answer.message)),
           parentOnHaiku(r.models),
         ],
       };

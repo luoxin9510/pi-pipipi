@@ -66,10 +66,9 @@ test("omitClaudeMd drops context files; trust decides whether project extensions
   }
 });
 
-test("run_in_background, isolation and name are ignored with warnings", async () => {
-  const { warnings } = await runAgent("", {}, true, { run_in_background: true, isolation: "worktree", name: "bob" });
+test("isolation and name are ignored with warnings", async () => {
+  const { warnings } = await runAgent("", {}, true, { isolation: "worktree", name: "bob" });
   assert.deepEqual(warnings, [
-    '"run_in_background" is not supported and was ignored',
     '"isolation" is not supported and was ignored',
     '"name" is not supported and was ignored',
   ]);

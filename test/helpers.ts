@@ -75,6 +75,7 @@ interface FakeCtx {
   model?: { provider: string; id: string };
   thinkingLevel?: string;
   trusted?: boolean;
+  hasUI?: boolean;
   sessionFile?: string;
   sessionId?: string;
   notes?: string[]; // collects ui notifications even when loading throws
@@ -85,16 +86,19 @@ export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
   const tools: Record<string, any> = {};
   const handlers: Record<string, Function[]> = {};
   const notes: string[] = c.notes ?? [];
+  const messages: { message: any; options: any }[] = []; // pi.sendMessage calls: what main was sent
   const pi = {
     on: (event: string, h: Function) => (handlers[event] ??= []).push(h),
     registerTool: (t: any) => (tools[t.name] = t),
     registerCommand: () => {},
+    sendMessage: (m: any, o: any) => messages.push({ message: m, options: o }),
     getSettings: () => ({ pipipi: { piCommand: FAKE_PI, ...settings } }),
   };
   pipipi(pi as any);
   const ctx = {
     cwd: c.cwd,
-    hasUI: true,
+    hasUI: c.hasUI ?? true,
+    isIdle: () => true,
     ui: { notify: (m: string) => notes.push(m), setWidget: () => {}, onTerminalInput: () => () => {}, custom: async () => {} },
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-opus-5-5" },
     thinkingLevel: c.thinkingLevel ?? "medium",
@@ -109,7 +113,12 @@ export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
   const updates: string[] = [];
   return {
     tool,
+    ctx,
+    emit: async (event: string, payload: object) => {
+      for (const h of handlers[event] ?? []) await h(payload, ctx);
+    },
     notes,
+    messages,
     updates,
     registered: tool !== undefined,
     run: (params: Record<string, unknown>, signal?: AbortSignal) =>

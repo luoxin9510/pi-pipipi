@@ -25,7 +25,8 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --test --experimental-strip-types 'test/real/*.test.ts' 'test/faults/*.test.ts' 'test/panel/*.test.ts' 'test/tui/*.test.ts'",
+    "test": "node --test --experimental-strip-types 'test/real/*.test.ts' 'test/faults/*.test.ts' 'test/panel/*.test.ts' 'test/tui/*.test.ts' 'test/parent/*.test.ts'",
+    "test:parent": "node --test --experimental-strip-types 'test/parent/*.test.ts'",
     "test:real": "node --test --experimental-strip-types 'test/real/*.test.ts'",
     "test:panel": "node --test --experimental-strip-types 'test/panel/*.test.ts'",
     "test:tui": "node --test --experimental-strip-types 'test/tui/*.test.ts'",
