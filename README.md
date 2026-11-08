@@ -353,6 +353,12 @@ plan for about 4.5 GB of memory while a large fan-out runs. Lower `maxConcurrent
 
 Design notes and tickets: `.scratch/pi-pipipi/` (v1) and `.scratch/pi-pipipi-v2/` (v2).
 
+## Porting to a pi-based agent
+
+Running a fork of pi, a rebranded build, or an app on pi's SDK? [docs/porting.md](docs/porting.md) lists every pi
+contract pi-pipipi relies on (CLI flags, the rpc protocol, session files, extension and TUI APIs), the file that relies
+on it, what still works without it, and how to run the test suites against your binary (`PIPIPI_TEST_PI`).
+
 ## License
 
 Apache-2.0

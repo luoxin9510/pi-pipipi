@@ -73,7 +73,9 @@ export async function directTool(cwd: string, signal: AbortSignal, options: Dire
     registerTool: (t: { name: string; execute: Function }) => (tools[t.name] = t),
     registerCommand: () => {},
     sendMessage: () => {},
-    getSettings: () => ({ pipipi: { ...PINNED.pipipi, ...options.settings } }),
+    getSettings: () => ({
+      pipipi: { ...PINNED.pipipi, ...(process.env.PIPIPI_TEST_PI ? { piCommand: process.env.PIPIPI_TEST_PI } : {}), ...options.settings },
+    }),
   };
   pipipi(api as unknown as Parameters<typeof pipipi>[0]);
   const sessionDir = mkdtempSync(join(tmpdir(), "pipipi-eval-sessions-"));
@@ -125,7 +127,7 @@ export function runParent(cwd: string, prompt: string, signal: AbortSignal, time
     "--tools", "+codemode", "--session-dir", sessionDir, "--mode", "json", "-p", "--", prompt,
   ];
   return new Promise((done) => {
-    const child = spawn("pi", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.env.PIPIPI_TEST_PI ?? "pi", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     let timedOut = false;
     child.stdout.on("data", (c: Buffer) => (out += c.toString("utf8")));
