@@ -76,7 +76,7 @@ test("after a fresh load the registry is rebuilt from meta files: finished runs,
   assert.equal(t2.menus.length, 1);
   const { options } = t2.menus[0]!;
   assert.equal(options.length, 3);
-  assert.match(options[0]!, /^completed +Plan\(second job\) · \d+ turns · /);
+  assert.match(options[0]!, /^completed +Plan\(second job\) · (\S+ · \S+ · )?\d+ turns · /);
   assert.ok(options[0]!.endsWith(b.agentId));
   assert.match(options[1]!, /Explore\(first job\)/);
   assert.match(options[2]!, /general-purpose · 0 turns · v1agent0000$/);

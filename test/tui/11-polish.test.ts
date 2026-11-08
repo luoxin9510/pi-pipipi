@@ -32,7 +32,7 @@ test("coloured rows, model and effort on the screen, and shift+x stops every run
     pi.press("down", "down", "enter");
     await pi.waitFor((s) => /main › tinted\(slow one\)/.test(s));
     const head = pi.viewport().split("\n").find((l) => l.includes("main › tinted(slow one)"))!;
-    assert.match(head, /tinted\(slow one\) anthropic\/claude-haiku-5-5 · low/);
+    assert.match(head, /tinted\(slow one\) .* turns · anthropic\/claude-haiku-5-5 · low/);
     assert.equal(pi.fgOf("tinted(slow one)"), CYAN);
     pi.press("esc");
     await pi.waitFor((s) => !s.includes("main › tinted"));

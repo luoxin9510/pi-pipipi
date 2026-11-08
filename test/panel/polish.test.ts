@@ -66,8 +66,8 @@ test("panel row tints the label only; the screen header tints the label", () => 
 test("screen header and /subagents picker show model and effort; a record without a model shows nothing extra", async () => {
   runningAgent("m1", "m1-a", { model: "anthropic/claude-haiku-5-5", thinking: "high" });
   runningAgent("m1", "m1-b", { model: "", thinking: "" });
-  assert.match(screenOf("m1-a").render(100)[0]!, /Explore\(m1-a\) anthropic\/claude-haiku-5-5 · high {3}/);
-  assert.match(screenOf("m1-b").render(100)[0]!, /Explore\(m1-b\) {3}main:/);
+  assert.match(screenOf("m1-a").render(160)[0]!, /Explore\(m1-a\) {3}main: .* · 0 turns · anthropic\/claude-haiku-5-5 · high$/);
+  assert.match(screenOf("m1-b").render(160)[0]!, /Explore\(m1-b\) {3}main: .* · 0 turns$/);
 
   const menus: string[][] = [];
   const dir = mkdtempSync(join(tmpdir(), "pipipi-polish-"));
