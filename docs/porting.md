@@ -32,14 +32,14 @@ and stderr as pipes and the parent's cwd.
 |---|---|
 | `--mode rpc` | JSONL commands on stdin, events on stdout |
 | `--model <provider/id>` | the resolved model |
-| `--thinking <level>` | `effort` |
-| `--tools a,b` | the agent's `tools`, mapped (`Read→read`, `Glob→find`, ...); `+codemode` without a list |
-| `--exclude-tools a,b` | `disallowedTools`, and `mcp__*` when `tools` lists no MCP tool |
-| `--system-prompt <file>` | the agent body + skills + environment block; replaces the default prompt |
+| `--thinking <level>` | `effort`, or the parent's level; must accept `off` |
+| `--tools a,b` | the agent's `tools`, mapped (`Read→read`, `Glob→find`, ...). Without a list, `--tools +codemode`: the `+` prefix adds to the default tools and must be supported |
+| `--exclude-tools a,b` | `disallowedTools`, and `mcp__*` when `tools` lists no MCP tool: entries are glob patterns |
+| `--system-prompt <path>` | the agent body + skills + environment block, written to a temp file; pi reads a path as the prompt's contents. If your agent takes the value as literal text, every child gets the path as its prompt: change `runChild` in `src/runner.ts` |
 | `--no-context-files` | `omitClaudeMd` |
 | `--approve` / `--no-approve` | the child gets the parent's project trust |
 | `--session-dir <dir> --session-id <id>` | a persisted child session (or `--no-session` for an in-memory parent) |
-| `-e <file>` | `src/child-codemode.ts` for codemode-only children (layer 4) |
+| `-e <file>` | `src/child-codemode.ts` for codemode-only children (layer 4). Loaded as TypeScript source, as pi loads every extension (pi-pipipi has no build step): your agent's extension loader must handle `.ts` |
 
 The environment is the parent's plus `PIPIPI_DEPTH=1`. The extension does nothing when that variable is set, so
 children get no `Agent` tool. If your agent drops unknown environment variables before loading extensions, nesting
@@ -60,8 +60,8 @@ Commands pi-pipipi sends:
 | Command | When |
 |---|---|
 | `{"id":"pipipi-prompt","type":"prompt","message":...}` | start of every exchange |
-| `{"type":"steer","message":...}` | the user types to a running subagent |
-| `{"type":"abort"}` | maxTurns reached on a tool turn, the caller aborted, the user pressed `x` / `/stop` |
+| `{"type":"steer","message":...}` (no id; pi's `response` to it is ignored) | the user types to a running subagent |
+| `{"type":"abort"}` (no id; response ignored) | maxTurns reached on a tool turn, the caller aborted, the user pressed `x` / `/stop` |
 | `{"id":...,"type":"set_model","provider":...,"modelId":...}` | `/model` on a running subagent |
 
 Then stdin is closed after `agent_settled`; the child must exit (pi-pipipi sends SIGTERM, then SIGKILL, if it does not).
@@ -101,12 +101,13 @@ subagent and `x` / `/stop` (they need a live stdin).
 |---|---|---|
 | `pi.registerTool({ name, parameters, outputSchema, exposure: "codemode", execute })`; `execute` returns `content`, `details`, `structuredContent`, `usage`, `isError` | `src/agent-tool.ts` | no tool: nothing works |
 | `pi.on("session_start", (event, ctx))` | `src/index.ts` | config and discovery never run |
-| `pi.on("agent_start" / "agent_end")` | `src/index.ts` | the note to main and main's state on the screen may use a stale context |
+| `pi.on("agent_start" / "agent_end", (event, ctx))` | `src/index.ts` | pi-pipipi keeps the latest `ctx` from these and `session_start`; without them the note to main and main's state on the screen use the context of session start, which a reload replaces |
 | `pi.getSettings()` keeping the unknown `pipipi` key | `src/config.ts` | defaults only (replace with your own config source) |
-| `pi.registerCommand` | `/subagents` | no `/subagents` |
+| `pi.registerCommand(name, { handler(args, ctx: ExtensionCommandContext) })` | `/subagents` | no `/subagents` |
 | `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })` | the note to main | main is not told about your exchanges |
-| `ctx.cwd`, `ctx.model {provider,id}`, `ctx.thinkingLevel`, `ctx.isProjectTrusted()`, `ctx.isIdle()`, `ctx.hasUI` | `src/agent-tool.ts`, `src/index.ts` | `inherit` and trust mirroring need them |
-| `ctx.sessionManager.getSessionFile()` / `getSessionId()` | sessions, registry | children run `--no-session`, no resume |
+| `ctx.cwd`, `ctx.model {provider,id}` (may be undefined: `inherit` then throws), `ctx.thinkingLevel`, `ctx.isProjectTrusted()`, `ctx.isIdle()` | `src/agent-tool.ts`, `src/index.ts` | `inherit`, thinking and trust mirroring, the note's delivery |
+| `ctx.hasUI`, `ctx.ui.notify` | `src/index.ts` | gates the panel and discovery warnings; false = tool only, no UI |
+| `ctx.sessionManager.getSessionFile()` / `getSessionId()` | sessions, registry | children run `--no-session`, no resume. The session dir must be writable: pi-pipipi writes `subagents/` there and rebuilds its list from it on every `session_start` (startup, reload, resume, new) |
 | `ctx.modelRegistry.getAvailable()` | `/model` picker | type `/model provider/id` only |
 
 Imports: `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `@earendil-works/pi-ai` (only `StringEnum` and
@@ -131,14 +132,14 @@ Only needed for the panel and the subagent screen.
 
 | API | Where | Notes |
 |---|---|---|
-| `ctx.ui.setWidget(key, (tui, theme) => Component, { placement: "belowEditor" })` | the panel | |
+| `ctx.ui.setWidget(key, (tui, theme) => Component, { placement: "belowEditor" })`; `tui.requestRender()` | the panel | components implement `render(width)` and `invalidate()` |
 | `ctx.ui.onTerminalInput(handler)` returning `{ consume: true }` | ↓ into the panel, panel keys | the handler gets raw input including kitty key **releases**; pi-pipipi ignores them with pi-tui's `isKeyRelease`. If your terminal layer sends other event encodings, check `handleKey` in `src/panel.ts` |
 | `tui.focusedComponent` (not public API) | the panel acts only while the editor (a component with `getText`) has focus | if your TUI renames it, the panel may steal keys from pickers: fix `focusedIsEditor` in `src/panel.ts` |
 | `ctx.ui.getEditorText()` | ↓ only on an empty editor | |
-| `ctx.ui.custom(factory, { overlay: true, overlayOptions })`, full width and height | the subagent screen | must not stop main's run; pi's `switchSession` would, so it is not used |
+| `ctx.ui.custom(factory, { overlay: true, overlayOptions })`, full width and height; `tui.terminal.rows` | the subagent screen (it draws exactly the terminal's rows; its commands: `/main`, `/model`, `/stop`) | must not stop main's run; pi's `switchSession` would, so it is not used. The screen is `Focusable` and gets keys through `handleInput` (pi filters key releases for components) |
 | `ctx.ui.select`, `ctx.ui.notify` | `/subagents`, notices | |
-| pi components `AssistantMessageComponent`, `UserMessageComponent`, `ToolExecutionComponent`, `getMarkdownTheme`; pi-tui `Input`, `Text`, `matchesKey`, `truncateToWidth` | the transcript | |
-| `theme.fg/bg` colour names `accent`, `success`, `error`, `warning`, `muted`, `dim`, `selectedBg` | panel and screen | a theme must define them (pi's built-in themes do) |
+| pi components `AssistantMessageComponent`, `UserMessageComponent`, `ToolExecutionComponent`, `getMarkdownTheme`; pi-tui `Input`, `Text`, the `TUI`, `Component` and `Focusable` types, `matchesKey`, `isKeyRelease`, `truncateToWidth` | the transcript, the screen, the panel | |
+| `theme.fg/bg/bold`; colour names `accent`, `success`, `error`, `warning`, `muted`, `dim`, `toolTitle`, `selectedBg` | panel and screen | a theme must define them (pi's built-in themes do) |
 
 ### Without pi's TUI
 
@@ -175,9 +176,16 @@ PIPIPI_TEST_PI=/path/to/your-agent npm run eval       # real-model evals (parent
 
 The real, tui and eval suites call Claude Haiku 5.5 and expect `~/.pi/agent/auth.json` (they copy it into a temp agent
 dir). If your binary reads its config elsewhere (`PI_CODING_AGENT_DIR` is what the suites set), adapt `sandbox()` in
-`test/real/helpers.ts` and the env in `test/tui/harness.ts`. Read failures by layer: a failing `01-tracer-bullet` or
-`06-run-outcomes` is layer 1; `07-sessions-and-resume` and `10-registry` layer 2; `09-codemode-only` layer 4; the
-`test/tui` suite layer 5.
+`test/real/helpers.ts` and the env in `test/tui/harness.ts`. The evals harness sets no agent dir: its parent and children use your normal config.
+
+Read failures by layer:
+
+| Layer | Tests |
+|---|---|
+| 1. Child process | `test/real/01-tracer-bullet`, `02-agent-files`, `03-model-selection`, `04-tools-and-flags` (flags such as `--tools`, `--exclude-tools`, `--no-context-files`), `05-skills`, `06-run-outcomes`, `08-concurrency-and-config`, `11-talk` (steer), `12-stop-and-model` (abort, set_model); `test/faults/` (stream handling) |
+| 2. Session files | `test/real/07-sessions-and-resume`, `10-registry` |
+| 4. Codemode | `test/real/09-codemode-only` |
+| 5. TUI | `test/panel/` (no pi), `test/tui/05-panel`, `06-screen`, `07-talk`, `08-stop-model`, `09-streaming` |
 
 Quick manual check that a binary speaks the rpc protocol (one haiku call):
 
