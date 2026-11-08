@@ -97,6 +97,29 @@ subagent and `x` / `/stop` (they need a live stdin).
   role `user`, `assistant` (content parts `text`, `thinking`, `toolCall`) and `toolResult`. A different session format
   only affects `transcriptParts` in `src/subagent-screen.ts`.
 
+### Git (worktree isolation, `src/worktree.ts`)
+
+`isolation: "worktree"` needs only `git` on the PATH (no pi contract); a host without git can drop it. The commands, all run
+with `execFile`, never through a shell, and serialised per repository (git's own lock fails concurrent `worktree add`):
+
+| Command | For |
+|---|---|
+| `git rev-parse --show-toplevel` | the main checkout; failing means "not a git repository" (the call throws) |
+| `git rev-parse --verify HEAD^{commit}` | the base commit; failing means no commits (the call throws) |
+| `git rev-parse --git-path info/exclude` | where `/.pi/worktrees/` is appended once (relative to the root; inside a linked worktree it is the shared main `.git/info/exclude`) |
+| `git status --porcelain` (main checkout) | dirty main checkout: a warning on the result |
+| `git worktree prune`, `git branch --list pipipi/<id>` | before a (re)create; an existing branch with a missing worktree is an error |
+| `git worktree add -q -b pipipi/<id> <root>/.pi/worktrees/<id> <base>` | create |
+| `git ls-files --others --ignored --exclude-from=.worktreeinclude -z`, `git check-ignore -z --stdin` | `.worktreeinclude`: pattern match, then keep only gitignored files |
+| `git status --porcelain -z --untracked-files=all`, `git rev-parse HEAD`, `git diff --name-only -z <base> HEAD`, `git log --format=%h\ %s <base>..HEAD` | changed or not, and what changed, after the child has exited |
+| `git worktree remove --force <path>`, `git branch -D pipipi/<id>` | remove an unchanged worktree |
+
+Verified on git 2.54: `worktree add` works from a repository that is itself a linked worktree; with no commits `HEAD` does
+not resolve (`fatal: invalid reference: HEAD`); the exclude path from `--git-path` is the shared one in a linked worktree.
+The child gets the worktree as its cwd (`spawn` option) and in the prompt's `Working directory:` line; its session files
+stay in the parent's `subagents/<parent session id>/`. The meta file `<agentId>.json` gains
+`worktree: { root, path, branch, base }`.
+
 ## 3. Extension API (parent side)
 
 | API | Where | If missing |

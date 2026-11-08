@@ -27,6 +27,8 @@ screen, rpc and codemode-only children). Tickets: `.scratch/pi-pipipi/issues/`, 
   layer over `exchange`), `subagents-command.ts`, `child-codemode.ts` (codemode-only extension loaded by children), `background.ts` (the `codemode`
   wrapper that moves scripts starting an `Agent` to the background, the script registry, ctrl+b and the end message).
 - `src/builtin/*.md` built-in agents in Claude Code format.
+- `src/worktree.ts` git worktree isolation (plan, create, settle, remove; `git` only). `test/worktree/*.test.ts`: the module and
+  `isolation` through the tool on fake pi, real git on temp repos in tmpdir (no model); never create worktrees in this checkout from a test.
 - `test/real/*.test.ts` node:test against real pi and real haiku; `test/faults/*.test.ts` scripted faults on fake pi.
   `npm test` runs these and the two below (Node >= 22.18 strips types).
 - `test/panel/*.test.ts` panel rows (`scripts.test.ts`: script rows, `x`, ctrl+b against the script registry), focus rules and screen rendering against the registry (no pi, no model). `test/tui/*.test.ts` drive real

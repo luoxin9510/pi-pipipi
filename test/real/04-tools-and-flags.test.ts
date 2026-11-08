@@ -66,10 +66,7 @@ test("omitClaudeMd drops context files; trust decides whether project extensions
   }
 });
 
-test("isolation and name are ignored with warnings", async () => {
-  const { warnings } = await runAgent("", {}, true, { isolation: "worktree", name: "bob" });
-  assert.deepEqual(warnings, [
-    '"isolation" is not supported and was ignored',
-    '"name" is not supported and was ignored',
-  ]);
+test("name is ignored with a warning", async () => {
+  const { warnings } = await runAgent("", {}, true, { name: "bob" });
+  assert.deepEqual(warnings, ['"name" is not supported and was ignored']);
 });

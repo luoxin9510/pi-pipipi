@@ -8,6 +8,7 @@ import { applyEvent, type LiveMessage } from "./live.ts";
 import type { ParentContext } from "./resolve.ts";
 import { addUsage, type ChildEvent, type ChildHandle, emptyUsage, type Progress, type RunResult, type Status, type Usage } from "./runner.ts";
 import { subagentSessionDir } from "./sessions.ts";
+import type { WorktreeRef } from "./worktree.ts";
 
 export type SubagentStatus = Status | "running" | "stopped";
 
@@ -36,6 +37,7 @@ export interface SubagentRecord {
   thinking: string;
   color?: string; // the agent definition's colour name, if any
   sessionDir?: string; // where the child session and meta file live; unset for an in-memory parent
+  worktree?: WorktreeRef; // set when the subagent is isolated: where it runs and the commit it started from
 }
 
 // "type(description)", or the type alone.
@@ -51,6 +53,7 @@ export interface SubagentStart {
   model: string;
   thinking: string;
   color?: string;
+  worktree?: WorktreeRef; // omit the key (not undefined) for a non-isolated exchange: a resume keeps the stored one
 }
 
 // The file keeps v1's `agentType` key so older versions still read it.
@@ -240,6 +243,7 @@ class Registry {
         thinking: meta.thinking ?? "",
         color: meta.color,
         sessionDir: dir,
+        ...(meta.worktree ? { worktree: meta.worktree } : {}),
       });
     }
     this.emit();

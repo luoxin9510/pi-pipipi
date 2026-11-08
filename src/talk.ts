@@ -24,6 +24,7 @@ export function talkTo(parent: ParentContext, id: string, text: string): { deliv
     { description: r.description, prompt: text, resume: id, model: r.model || undefined, effort: r.thinking || undefined },
     getHost().config(),
     parent,
+    { worktree: r.worktree && { ...r.worktree } }, // an isolated subagent continues in its worktree
   );
   const done = exchange(parent, spec, { type: r.type, description: r.description, color: def.color, said: text }, undefined, () => {}).then(() => {});
   return { delivery: queued ? "queued" : "started", done };
