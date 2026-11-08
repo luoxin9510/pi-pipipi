@@ -2,15 +2,23 @@
 // `/subagents worktrees`: the kept `pipipi/*` worktrees of the current checkout, and removal of the ones the user picks.
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { label, registry, type SubagentRecord } from "./registry.ts";
+import { label, modelInfo, registry, type SubagentRecord } from "./registry.ts";
+import { stopEverything } from "./stop-all.ts";
 import { openSubagentScreen } from "./subagent-screen.ts";
 import { listWorktrees, removeWorktree, type WorktreeInfo } from "./worktree.ts";
 
-const line = (r: SubagentRecord) => `${r.status.padEnd(9)} ${label(r)} · ${r.turns} turns · ${r.id}`;
+const line = (r: SubagentRecord) => `${r.status.padEnd(9)} ${label(r)} · ${modelInfo(r) ? `${modelInfo(r)} · ` : ""}${r.turns} turns · ${r.id}`;
 
 export async function subagentsCommand(ctx: ExtensionCommandContext, args = ""): Promise<void> {
   if (args.trim() === "worktrees") return worktreesCommand(ctx);
-  if (args.trim() !== "") return ctx.ui.notify(`pi-pipipi: unknown argument "${args.trim()}"; use /subagents or /subagents worktrees`, "warning");
+  if (args.trim() === "stop") {
+    const { agents, scripts } = await stopEverything(ctx.sessionManager.getSessionId());
+    return ctx.ui.notify(
+      agents + scripts === 0 ? "pi-pipipi: nothing is running" : `pi-pipipi: stopped ${agents} subagent${agents === 1 ? "" : "s"} and ${scripts} script${scripts === 1 ? "" : "s"}`,
+      "info",
+    );
+  }
+  if (args.trim() !== "") return ctx.ui.notify(`pi-pipipi: unknown argument "${args.trim()}"; use /subagents, /subagents stop or /subagents worktrees`, "warning");
   if (!ctx.sessionManager.getSessionFile()) {
     return ctx.ui.notify("pi-pipipi: subagents of an in-memory session cannot be viewed (the session is not saved)", "info");
   }

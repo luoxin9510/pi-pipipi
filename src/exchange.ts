@@ -81,6 +81,7 @@ export function noteText(type: string, id: string, said: string[], run: RunResul
 export interface ExchangeInfo {
   type: string;
   description: string;
+  color?: string;
   said?: string; // the user's message that started this exchange
 }
 
@@ -116,6 +117,7 @@ export async function exchange(
         description: info.description,
         model: spec.model,
         thinking: spec.thinking,
+        color: info.color,
         ...(spec.worktree ? { worktree: spec.worktree } : {}),
       });
       let run: RunResult;

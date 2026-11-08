@@ -50,9 +50,10 @@ Invalid files are skipped with a warning.
 | `maxTurns` | The child is stopped after that many turns; the result is `partial`. |
 | `skills` | Full `SKILL.md` text preloaded into the system prompt. Searched (recursively) in `.pi/skills`, `.agents/skills`, `.claude/skills` from cwd up to the repo root, then `~/.pi/agent/skills`, `~/.agents/skills`, `~/.claude/skills`. Skill paths from settings or pi packages are not searched. |
 | `omitClaudeMd` | `--no-context-files` |
+| `color` | `red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink` or `cyan` tints the agent's label in the panel and on its screen header (fixed 256-colour escapes; the status icon and text keep their status colours). Any other value warns once and is ignored. |
 | `isolation` | `worktree` runs every call of this agent in its own git worktree; the call's `isolation` wins. See [Worktree isolation](#worktree-isolation). |
 | `memory` | `user`, `project` or `local` gives the agent a persistent directory. See [Agent memory](#agent-memory). |
-| `mcpServers`, `autoCompactWindow`, `color`, `permissionMode`, `hooks`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
+| `mcpServers`, `autoCompactWindow`, `permissionMode`, `hooks`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
 
 ## Model selection
 
@@ -204,13 +205,14 @@ drops out; running rows stay. Only subagents that ran in this pi process show as
 | `↓` / `↑` | move the selection (`↑` on the first row, or `Esc`, goes back to the editor) |
 | `Enter` | open the selected subagent's screen |
 | `x` | stop the selected subagent (nothing happens on a row that is not running) |
+| `shift+x` | stop everything of the session: every background script and every running subagent |
 
-While the panel has focus it takes `↑ ↓ Enter x Esc`. Any other key (ctrl+c, ctrl+d, text) goes to pi as usual and gives the
+While the panel has focus it takes `↑ ↓ Enter x shift+x Esc`. Any other key (ctrl+c, ctrl+d, text) goes to pi as usual and gives the
 focus back to the editor. In an in-memory session (`pi --no-session`) the panel lists no rows, only a one-line notice that
 subagents cannot be viewed.
 
 `/subagents` lists every subagent of the session, newest first, including finished ones, ones from before a `/reload`
-and ones from a resumed parent session. Pick one to open its screen.
+and ones from a resumed parent session, each with its model and effort. Pick one to open its screen, whose header also shows the model and effort. `/subagents stop` stops every running subagent and background script of the session (the notice counts them; with nothing running it says so), from anywhere.
 
 ### The subagent screen
 

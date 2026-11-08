@@ -22,7 +22,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, type Focusable, Input, matchesKey, Text, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { parentContext } from "./agent-tool.ts";
-import { COLORS, ICONS, label, registry, type SubagentRecord } from "./registry.ts";
+import { tint } from "./color.ts";
+import { COLORS, ICONS, label, modelInfo, registry, type SubagentRecord } from "./registry.ts";
 import type { ParentContext } from "./resolve.ts";
 import { talkTo } from "./talk.ts";
 
@@ -277,7 +278,7 @@ export class SubagentScreen implements Component, Focusable {
     const all = [...this.finished(width), ...this.streaming(width)];
     const main = this.mainIdle() ? t.fg("muted", "main: idle") : t.fg("accent", "main: running");
     const sub = `${ICONS[r.status]} ${r.status} · ${r.turns} turns`;
-    const head = truncateToWidth(` ${t.fg("accent", "‹ main")} ${t.fg("dim", "(esc or /main)")} ${t.fg("muted", "·  main ›")} ${t.bold(label(r))}   ${main} · ${t.fg(COLORS[r.status], sub)}`, width);
+    const head = truncateToWidth(` ${t.fg("accent", "‹ main")} ${t.fg("dim", "(esc or /main)")} ${t.fg("muted", "·  main ›")} ${tint(r.color, t.bold(label(r)))}   ${main} · ${t.fg(COLORS[r.status], sub)}${modelInfo(r) && ` · ${t.fg("dim", modelInfo(r))}`}`, width);
     const rule = t.fg("dim", "─".repeat(width));
 
     const height = Math.max(1, rows - 5);

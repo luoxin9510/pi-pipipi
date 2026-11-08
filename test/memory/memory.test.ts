@@ -29,10 +29,10 @@ function setup(fields = "memory: project") {
 const toolsOf = (args: string[]) => args[args.indexOf("--tools") + 1].split(",").sort();
 
 test("memory is parsed and no longer inert; a wrong value skips the file naming the field", () => {
-  const ok = parse("memory: local\ncolor: blue");
+  const ok = parse("memory: local\nhooks: {}");
   assert.ok(ok.ok);
   assert.equal(ok.def.memory, "local");
-  assert.deepEqual(ok.def.inert, ["color"]);
+  assert.deepEqual(ok.def.inert, ["hooks"]);
   const none = parse("");
   assert.ok(none.ok && none.def.memory === undefined);
   const bad = parse("memory: global");
