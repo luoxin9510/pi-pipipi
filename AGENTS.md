@@ -35,6 +35,9 @@ screen, rpc and codemode-only children). Tickets: `.scratch/pi-pipipi/issues/`, 
 - `test/fake-pi.mjs` stands in for the `pi` binary in the fault suite (and `npm run stress -- --fake`).
 - `evals/` real-model evals, `stress/` concurrency test. Dev scripts, not shipped.
 
+- `docs/porting.md` lists every pi contract the code relies on. A change that adds, drops or changes one (a CLI flag,
+  an rpc command or event, an extension or TUI API) updates it in the same commit.
+
 ## Tests
 
 - Test through the highest seam: the registered tool's `execute`, children real. `npm test` uses real haiku (about $0.01

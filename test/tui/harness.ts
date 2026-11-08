@@ -9,7 +9,8 @@ import xterm from "@xterm/headless";
 import * as pty from "node-pty";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-export const PI = join(ROOT, "node_modules", ".bin", "pi");
+// PIPIPI_TEST_PI: run the suite against another pi build (a fork or a pi-based agent); see docs/porting.md.
+export const PI = process.env.PIPIPI_TEST_PI ?? join(ROOT, "node_modules", ".bin", "pi");
 export const HAIKU = "anthropic/claude-haiku-5-5";
 const USER_AUTH = join(process.env.HOME ?? "", ".pi", "agent", "auth.json");
 
