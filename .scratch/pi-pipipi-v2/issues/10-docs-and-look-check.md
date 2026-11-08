@@ -48,3 +48,5 @@
 - Smells done: ICONS/COLORS keyed by `SubagentStatus` and one `label()` in `registry.ts`; `Panel.rows()` logic moved to
   `registry.visible()`; `exchange.ts` names (`host`, `userSteers`), `talkConfig` middle man removed; `submit()` splits once.
 - Smells skipped: moving the semaphore out of `exchange.ts` (documented in AGENTS.md instead; only exchanges use it).
+
+2026-11-08 (owner look check, round 1): the panel and screen show; but ↓ could not select the first row, only the second. Cause: kitty-protocol terminals send a key release after each press, and pi passes releases to input listeners (not to components); the release of the focusing ↓ moved the selection. Fixed in e9dc05d (releases ignored, swallowed while focused), unit + pty test (press + release). Waiting for the owner to retry.
