@@ -25,3 +25,26 @@
 10. In the panel select a running row and press `x`: the row turns `■ stopped`, and the script finishes with `error: "stopped by user"`.
 11. After the script ends wait 30 s: finished rows drop out. Run `/subagents`, pick a finished one, type a follow-up: it continues and streams a reply; main gets a note.
 12. Note anything that looks wrong (layout, colours, key conflicts, flicker) in a comment here, then set Status to closed.
+
+2026-11-08 Review fixes (branch v2-review-fixes), from the code review of the v2 branch and the owner's two decisions
+(no `main` row in the panel: back hint, Esc and /main; the subagent screen streams live):
+
+- Streaming: the runner passes every rpc event to the registry (`registry.event/watch/streaming`, `src/live.ts` rebuilds the
+  message being written from `message_update` deltas). The subagent screen draws it token by token (text, thinking, a tool
+  call once complete). The session file is read when the screen opens and when the child reports a non-delta event or the
+  status changes; the 300 ms readdir/stat timer is gone. pty test `test/tui/09-streaming.test.ts` (real haiku, 150-line reply).
+- Bugs: panel passes unused keys (ctrl+c, ctrl+d, text) through and gives the focus back; `turn()` removes its abort listener;
+  `set_model` ids from a counter; a run that finishes before the abort lands is no longer "stopped" (the child's `aborted`
+  flag decides, `RunResult.aborted`), `abortChild` asks once so the grace period cannot move; `busy()` is exact;
+  only a caller abort marks an exchange stopped, other failures are failed; the panel is disposed explicitly when a
+  session installs it again; the in-memory parent panel lists no rows and shows a notice; dead `running` meta files get an
+  `endedAt` (file mtime); rows rebuilt from disk never show in the panel (only subagents that ran in this process linger);
+  a corrupt meta file is skipped with a warning at session start; note delivery and the screens use the latest context
+  (`agent_start`/`agent_end`/`session_start` refresh it).
+- Standards: no `PIPIPI_PANEL_LINGER_MS` env seam, the linger is the setting `pipipi.panelLingerMs` (the pty harness writes it);
+  `LINGER_MS` export gone; no `stdin.writable` guards (explicit `finished`/`settled` state); `registry.stopRequested` is
+  used, not discarded; `ModelChoice` is a plain function; `=new Set` formatting; AGENTS.md layout and the two test helper
+  files explained.
+- Smells done: ICONS/COLORS keyed by `SubagentStatus` and one `label()` in `registry.ts`; `Panel.rows()` logic moved to
+  `registry.visible()`; `exchange.ts` names (`host`, `userSteers`), `talkConfig` middle man removed; `submit()` splits once.
+- Smells skipped: moving the semaphore out of `exchange.ts` (documented in AGENTS.md instead; only exchanges use it).

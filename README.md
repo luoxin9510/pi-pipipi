@@ -114,7 +114,8 @@ A child that fails returns `status: "failed"` instead of throwing, so scripts ke
 Children run with `PIPIPI_DEPTH=1` and get no `Agent` tool: nesting is one level. Child sessions are stored next to
 the parent session under `subagents/<parent session id>/`, with a small meta file per child (type, description, model,
 status, turns, usage, times). With an in-memory parent session (`pi --no-session`), children are in memory too: they
-cannot be resumed, and the panel, `/subagents` and the subagent screen cannot show them (`/subagents` says so). The
+cannot be resumed, and the subagent screen cannot show them: the panel shows a one-line notice instead of rows and
+`/subagents` says so. The
 `Agent` tool itself works as before. A resume without `subagent_type` reuses the agent type of the first run; a different
 `subagent_type` is an error. Children inherit the parent's project trust.
 
@@ -140,8 +141,9 @@ Subagents (2)
 | `✗` | failed |
 | `■` | stopped by you or by an abort |
 
-A row shows the type and description, turns, the last tool, and cost. A finished row stays 30 s and then drops out;
-running rows stay. The panel hides when it is empty. Older subagents of the session are still reachable with
+A row shows the type and description, turns, the last tool, and cost. A finished row stays 30 s (setting `panelLingerMs`) and then
+drops out; running rows stay. Only subagents that ran in this pi process show as rows: ones rebuilt from disk after a
+`/reload` are not rows and are reached with `/subagents`. The panel hides when it is empty. Older subagents of the session are still reachable with
 `/subagents`.
 
 | Key | Effect |
@@ -151,7 +153,9 @@ running rows stay. The panel hides when it is empty. Older subagents of the sess
 | `Enter` | open the selected subagent's screen |
 | `x` | stop the selected subagent (nothing happens on a row that is not running) |
 
-While the panel has focus it takes every key, typing included. Otherwise it takes none.
+While the panel has focus it takes `↑ ↓ Enter x Esc`. Any other key (ctrl+c, ctrl+d, text) goes to pi as usual and gives the
+focus back to the editor. In an in-memory session (`pi --no-session`) the panel lists no rows, only a one-line notice that
+subagents cannot be viewed.
 
 `/subagents` lists every subagent of the session, newest first, including finished ones, ones from before a `/reload`
 and ones from a resumed parent session. Pick one to open its screen.
@@ -161,8 +165,10 @@ and ones from a resumed parent session. Pick one to open its screen.
 It covers the whole terminal. It is a view: main's pi keeps running underneath, and your main session is not
 switched. The header shows `‹ main (esc or /main)`, the subagent (`type(description)`, status, turns) and whether main
 is idle or running. Below it is the subagent's conversation, drawn like pi draws a session: messages, tool calls with
-their results, codemode scripts in full. It grows while the subagent runs (it updates when a message is finished, not
-per token). There is one input line at the bottom.
+their results, codemode scripts in full. While the subagent runs, the message it is writing streams in token by
+token (text and thinking as they arrive, a tool call once its arguments are complete), taken from the child's rpc event
+stream; finished messages come from its session file, which is read when the screen opens and when the child reports
+that something was added (not on a timer). There is one input line at the bottom.
 
 | Input | Effect |
 |---|---|
@@ -216,7 +222,8 @@ still ignored (a warning).
 ## Limits and memory
 
 - The registry, panel and queues live in the memory of the pi process. After `/reload` or in a resumed session the
-  registry is rebuilt from the meta files; a meta file left in `running` (pi died) shows as `stopped`.
+  registry is rebuilt from the meta files; a meta file left in `running` (pi died) shows as `stopped`. A meta file that cannot be read is skipped with a
+  warning at session start.
 - `maxConcurrent` (default 20) caps running children per pi process; extra calls and extra exchanges queue.
 - Each child is a full `pi`, about 220 MB (see [Stress test](#stress-test)).
 - An in-memory parent session keeps nothing on disk: no meta files, no viewing, no resume.
@@ -232,6 +239,7 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
   "toolMap": { "WebFetch": "mcp__fetch__fetch" },  // merged over the built-in map
   "maxConcurrent": 20,                             // running children per pi process; extra calls queue. The first session's value wins for the process
   "childCodemode": "only",                         // "only" (default): children see only `codemode`; "inherit": v1 behaviour, direct tools
+  "panelLingerMs": 30000,                          // how long a finished subagent stays in the panel (the pty tests shorten it)
   "piCommand": "pi"
 }
 ```
@@ -256,8 +264,8 @@ The real suite drives the Agent tool in-process with real children: the pinned p
 real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 97 tests (69 real, 15
-fault, 6 panel, 7 tui) in about 40 s wall, files in parallel. The in-process real suite costs about $0.02 per run
+read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 110 tests (70 real, 18
+fault, 14 panel, 8 tui) in about 1.5 to 2 min wall, files in parallel. The in-process real suite costs about $0.02 per run
 (measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
 `usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
