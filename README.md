@@ -85,16 +85,18 @@ Without Anthropic credentials, haiku (and so every agent by default) fails with 
 
 ## The Agent tool
 
-Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume? }`.
-`subagent_type` defaults to `general-purpose`. `run_in_background`, `isolation` and `name` are accepted and ignored
+Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume?, run_in_background? }`.
+`subagent_type` defaults to `general-purpose`. `isolation` and `name` are accepted and ignored
 with a warning. Children run as `pi --mode rpc` and get the prompt as a protocol message on stdin, not as a command
 line argument, so prompts of any size work.
+
+`run_in_background`: omitted, the first `Agent` call moves its codemode script to the background; `false` keeps the script in the foreground; `true` returns `status: "running"` at once and main gets a message when the agent ends (output cut at 8 KB), without moving the script.
 
 Result:
 
 ```ts
 {
-  status: "completed" | "partial" | "failed";
+  status: "completed" | "partial" | "failed" | "running"; // running: only with run_in_background: true
   agentId: string;      // pass as `resume` to continue this agent's session
   agentType: string;
   output: string;       // the agent's last message

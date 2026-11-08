@@ -131,7 +131,7 @@ under other names, replace the import paths (`grep -rn "@earendil-works" src`), 
   the original `ctx` (`ctx.executeTool`) after the call and main's turn have ended. It relies on: nested tool call ids
   `<codemode call id>/<n>` (the owner of an `Agent` call is found by that prefix), `ctx.executeTool` working after the
   tool call returned, and `pi.sendMessage(msg, { triggerTurn: true })` starting a run when main is idle (`{ deliverAs: "steer" }`
-  when it runs). Without them, no background scripts (the planned `pipipi.backgroundScripts: false` is v2 behaviour).
+  when it runs). `run_in_background: true` agents run detached from the call's signal and report with the same `sendMessage` delivery. Without them, no background scripts (the planned `pipipi.backgroundScripts: false` is v2 behaviour).
 - With codemode-only, an agent's `tools` list must also bind inside scripts. On pi 1.5.0 it does (a script calling a
   tool outside `--tools` gets "does not exist"). Check yours with `test/real/09-codemode-only.test.ts`.
 

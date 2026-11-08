@@ -12,6 +12,7 @@ export interface ScriptRecord {
   callId: string; // the codemode tool call id; the script's Agent calls have ids "<callId>/<n>"
   sessionId: string; // the main session the script belongs to
   state: ScriptState;
+  pinned: boolean; // an Agent call said run_in_background: false: the script stays in the foreground
   agents: string[]; // agentIds in start order
   startedAt: number;
   endedAt?: number;
@@ -42,17 +43,20 @@ class ScriptRegistry {
   }
 
   start(callId: string, sessionId: string, move: () => void): ScriptRecord {
-    const script: ScriptRecord = { id: `S${++this.counter}`, callId, sessionId, state: "foreground", agents: [], startedAt: Date.now() };
+    const script: ScriptRecord = { id: `S${++this.counter}`, callId, sessionId, state: "foreground", pinned: false, agents: [], startedAt: Date.now() };
     this.scripts.set(script.id, script);
     this.movers.set(callId, move);
     this.changed();
     return script;
   }
 
-  // An Agent call is about to start: the first one in a foreground script moves it to the background.
-  agentStarting(toolCallId: string): void {
+  // An Agent call is about to start. `false` pins its foreground script (later calls do not move it); `true` leaves the
+  // script alone (only that agent runs in the background); otherwise the first call moves a foreground script.
+  agentStarting(toolCallId: string, runInBackground?: boolean): void {
     const script = this.owner(toolCallId);
-    if (script?.state === "foreground") this.movers.get(script.callId)!();
+    if (!script) return;
+    if (runInBackground === false) script.pinned = true;
+    else if (runInBackground === undefined && script.state === "foreground" && !script.pinned) this.movers.get(script.callId)!();
   }
 
   addAgent(toolCallId: string, agentId: string): void {

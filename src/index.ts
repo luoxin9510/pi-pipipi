@@ -24,9 +24,9 @@ export default function pipipi(pi: ExtensionAPI) {
 
   // Wraps codemode so a script that starts an Agent moves to the background (the backgroundScripts config key is ticket 03).
   // Delivery to main: a turn starts when it is idle, a steer when it runs.
-  installBackground(pi, (content) =>
-    pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" }),
-  );
+  const deliver = (content: string) =>
+    pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" });
+  installBackground(pi, deliver);
 
   pi.registerCommand("subagents", { description: "List this session's subagents", handler: (_args, ctx) => subagentsCommand(ctx) });
   pi.on("agent_start", track);
@@ -48,7 +48,7 @@ export default function pipipi(pi: ExtensionAPI) {
     });
     const warnings = registry.rebuild(parentContext(ctx));
     const discovery = discoverAgents(ctx.cwd);
-    pi.registerTool(agentTool(() => config!, describeAgents(discovery)));
+    pi.registerTool(agentTool(() => config!, describeAgents(discovery), deliver));
     if (ctx.hasUI) {
       installPanel(() => current!, config);
       for (const warning of [...warnings, ...discovery.warnings]) ctx.ui.notify(`pi-pipipi: ${warning}`, "warning");
