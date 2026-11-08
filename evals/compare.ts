@@ -47,7 +47,7 @@ for (const task of tasks) {
   for (const mode of modes) {
     const rs = await Promise.all(
       Array.from({ length: runs }, async () => {
-        const extra = mode.tools
+        const extra: Record<string, string> = mode.tools
           ? { ".claude/agents/worker.md": `---\nname: worker\ndescription: Does the task\ntools: ${mode.tools}\n---\nDo the task, then reply as asked.\n` }
           : {};
         const t = await directTool(fixture({ ...task.files, ...extra }), controller.signal, { settings: mode.settings });

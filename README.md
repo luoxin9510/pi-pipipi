@@ -173,19 +173,34 @@ npm run eval -- --runs 3           # repeat, for pass rates
 npm run eval -- --only resume      # cases whose name contains "resume"
 ```
 
-`evals/cases.ts` holds 13 cases. Eleven call the tool in-process with real `pi` children (listing, read-only agents
+`evals/cases.ts` holds 14 cases. Twelve call the tool in-process with real `pi` children (listing, read-only agents
 cannot write, custom agent tools, resume, `maxTurns`, skills, context files vs `omitClaudeMd`, model aliases, a bad
-model, no nesting, parallel runs). Two start a real parent `pi` on haiku with codemode and this checkout
+model, no nesting, parallel runs, and a steer that changes a running subagent's course, sent through the registry handle and graded by an exact token and a file that must not appear). Two start a real parent `pi` on haiku with codemode and this checkout
 (`--no-extensions -e builtin:codemode -e ./src/index.ts`), one with a given script and one where the model decides to
 delegate. Cases are graded from the structured result and side effects. `defaultModel` is pinned to `haiku` whatever
 your settings say, and every case checks that every result (or, for the parent cases, every assistant message of the
 parent and its children) ran on haiku. A case running over 5 minutes is aborted and its children stopped. Results go
 to `evals/results/` (ignored by git).
 
-Last run (pi 1.5.0): 39/39 over 3 runs, $0.028 in all. The first version of the suite found a bug that the fake-pi
+Children are `pi --mode rpc` and codemode-only by default. Last run (pi 1.5.0, v2): 39/39 over 3 runs for the 13 original cases, $0.027 in all; the steer case passed 11/13 over two batches (the miss: haiku batched both steps into one codemode script, so there was nothing left to steer; $0.0005 per run). The first version of the suite found a bug that the fake-pi
 tests had missed (a run could go past `maxTurns` and still be reported `completed`), fixed since. Two checks depend on
 the model or on timing and could fail without a bug: `maxTurns` needs haiku to call a tool on its first turn, and the
 parallel case needs wall time under 0.7 × the summed run times.
+
+#### Codemode-only vs direct tools
+
+`npm run compare -- --runs 5` runs the same two tasks with the default children (codemode-only) and with an agent that
+lists `Read, Grep, Glob, Bash` under `childCodemode: "inherit"` (direct tools), 5 runs each, children in parallel:
+
+| task | mode | correct | turns | wall s | cost |
+|---|---|---|---|---|---|
+| 5 reads + grep | codemode-only | 5/5 | 2.0 | 4.9 | $0.00122 |
+| 5 reads + grep | direct tools | 3/5 | 2.6 | 8.1 | $0.00101 |
+| search + read chain | codemode-only | 5/5 | 3.0 | 6.0 | $0.00067 |
+| search + read chain | direct tools | 5/5 | 4.4 | 10.2 | $0.00074 |
+
+Codemode-only saves turns and about 40% wall time. Cost is about equal (+21% on the first task, -9% on the second, on
+fractions of a cent); direct tools got the first task wrong twice (haiku miscounted by hand).
 
 ### Stress test
 
@@ -195,17 +210,17 @@ npm run stress -- --calls 20 --limit 20
 npm run stress -- --fake           # 200 calls against test/fake-pi.mjs: the extension's own overhead
 ```
 
-Last run (Apple M5, 10 cores, 24 GB; pi 1.5.0; each call an Explore reading one file):
+Last run (Apple M5, 10 cores, 24 GB; pi 1.5.0, v2 rpc codemode-only children; each call an Explore reading one file):
 
 | | 20 calls | 40 calls (limit 20) | 200 fake calls (limit 20, 550 ms each) |
 |---|---|---|---|
 | completed (all on haiku, right answer) | 20/20 | 40/40 | 200/200 |
-| wall | 4.9 s | 10.4 s | 5.6 s (ideal 5.5 s) |
-| call latency p50 / p95 | 4.6 / 4.9 s | 6.0 / 9.3 s | 2.9 / 5.5 s |
-| latency − child run p50 / p95 (queue wait + spawn) | 9 / 26 ms | 29 ms / 5.4 s | 2.3 / 5.0 s |
+| wall | 5.3 s | 11.3 s | 6.1 s (ideal 5.5 s) |
+| call latency p50 / p95 | 4.7 / 5.2 s | 7.9 / 9.4 s | 3.3 / 6.0 s |
+| latency − child run p50 / p95 (queue wait + spawn) | 9 / 17 ms | 21 ms / 5.2 s | 2.8 / 5.4 s |
 | peak children (sampled from `ps`) | 20 | 20 | 20 |
-| peak RSS (all children) | 3.7 GB | 4.5 GB | 0.9 GB |
-| cost | $0.0086 | $0.0059 | — |
+| peak RSS (all children) | 4.5 GB | 4.9 GB | 0.9 GB |
+| cost | $0.0085 | $0.0059 | — |
 
 The 40-call phase costs less than the 20-call one because it runs second: the shared system prompt is then in the
 prompt cache. One earlier run sampled 21 children once (`ps` caught a short-lived extra process); the limit itself is a
