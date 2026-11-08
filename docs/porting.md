@@ -101,6 +101,7 @@ subagent and `x` / `/stop` (they need a live stdin).
 |---|---|---|
 | `pi.registerTool({ name, parameters, outputSchema, exposure: "codemode", execute })`; `execute` returns `content`, `details`, `structuredContent`, `usage`, `isError` | `src/agent-tool.ts` | no tool: nothing works |
 | `pi.on("session_start", (event, ctx))` | `src/index.ts` | config and discovery never run |
+| `pi.on("session_shutdown", (event, ctx))` (emitted on quit, reload, /new, resume and fork, before the runtime is torn down; rpc SIGTERM emits it with reason "quit") | `src/index.ts` | background scripts and detached agents keep running past the session; with it they are stopped (agents `stopped`, resumable) and main is sent nothing |
 | `pi.on("agent_start" / "agent_end", (event, ctx))` | `src/index.ts` | pi-pipipi keeps the latest `ctx` from these and `session_start`; without them the note to main and main's state on the screen use the context of session start, which a reload replaces |
 | `pi.getSettings()` keeping the unknown `pipipi` key | `src/config.ts` | defaults only (replace with your own config source) |
 | `pi.registerCommand(name, { handler(args, ctx: ExtensionCommandContext) })` | `/subagents` | no `/subagents` |

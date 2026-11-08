@@ -7,6 +7,7 @@ export interface Config {
   maxConcurrent: number;
   piCommand: string;
   childCodemode: "only" | "inherit";
+  backgroundScripts: boolean; // a script that starts an Agent moves to the background
   panelLingerMs: number; // how long a finished subagent stays in the panel
 }
 
@@ -53,8 +54,12 @@ export function readConfig(raw: unknown): Config {
   const panelLingerMs = r.panelLingerMs ?? 30_000;
   if (typeof panelLingerMs !== "number" || !(panelLingerMs >= 0)) throw new Error("pipipi.panelLingerMs must be a number of milliseconds, 0 or more");
 
+  const backgroundScripts = r.backgroundScripts ?? true;
+  if (typeof backgroundScripts !== "boolean") throw new Error(`pipipi.backgroundScripts must be true or false, got ${JSON.stringify(backgroundScripts)}`);
+
   return {
     panelLingerMs,
+    backgroundScripts,
     models: { ...DEFAULT_MODELS, ...stringMap(r.models, "models") },
     defaultModel: optionalString(r.defaultModel, "defaultModel") ?? "haiku",
     toolMap: stringMap(r.toolMap, "toolMap"),

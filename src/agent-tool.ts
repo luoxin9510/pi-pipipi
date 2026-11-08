@@ -9,7 +9,7 @@ import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ChildSpec, type ParentContext, resolveChild } from "./resolve.ts";
 import { exchange } from "./exchange.ts";
-import { storedAgentType } from "./sessions.ts";
+import { capText, storedAgentType } from "./sessions.ts";
 import { emptyUsage, type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
@@ -41,19 +41,29 @@ export const outputSchema = Type.Object({
 });
 export type AgentResult = Omit<Static<typeof outputSchema>, "status"> & { status: Status | "running" };
 
-export function describeAgents({ agents }: Discovery): string {
+const BACKGROUND_RULES = [
+  "Background rules. By default the first Agent call in a codemode script moves the whole script to the background: the",
+  "codemode call returns to you at once, the script keeps running, and its return value arrives later as a message (do",
+  "not wait or poll; end your turn or do other work). `run_in_background: false` keeps the script in the foreground:",
+  "you wait and the codemode call returns the script's own result. `run_in_background: true` makes this call return",
+  "at once with status \"running\" and the agentId (output is empty); the agent finishes on its own and you get its",
+  "output, status and cost as a message. It does not move the script to the background.",
+];
+
+// pipipi.backgroundScripts: false: scripts always wait; only an explicit `true` detaches an agent.
+const DETACHED_RULES = [
+  "Scripts wait for their agents. `run_in_background: true` makes a call return at once with status \"running\" and the",
+  "agentId (output is empty); the agent finishes on its own and you get its output, status and cost as a message.",
+];
+
+export function describeAgents({ agents }: Discovery, backgroundScripts: boolean): string {
   const list = [...agents.values()].map((a) => `- ${a.name}: ${a.description}`).join("\n");
   return [
     "Run a subagent: a separate pi session with its own system prompt, tools and model. It sees only `prompt`, so",
     "write a complete task. The result's `output` is the agent's final message; filter it before returning it.",
     "Run independent agents in parallel with Promise.all.",
     "",
-    "Background rules. By default the first Agent call in a codemode script moves the whole script to the background: the",
-    "codemode call returns to you at once, the script keeps running, and its return value arrives later as a message (do",
-    "not wait or poll; end your turn or do other work). `run_in_background: false` keeps the script in the foreground:",
-    "you wait and the codemode call returns the script's own result. `run_in_background: true` makes this call return",
-    "at once with status \"running\" and the agentId (output is empty); the agent finishes on its own and you get its",
-    "output, status and cost as a message. It does not move the script to the background.",
+    ...(backgroundScripts ? BACKGROUND_RULES : DETACHED_RULES),
     "",
     "Available agents (subagent_type):",
     list,
@@ -118,12 +128,9 @@ async function executeAgent(
   return { agentId: spec.agentId, agentType, model: spec.model, warnings: spec.warnings, ...run };
 }
 
-export const END_OUTPUT_LIMIT = 8000; // a plain cut for now
-
 // What main gets when a `run_in_background: true` agent ends.
-export function agentEndMessage(agentId: string, agentType: string, r?: AgentResult, error?: string): string {
-  const out = r?.output ?? "";
-  const cut = out.length > END_OUTPUT_LIMIT ? `${out.slice(0, END_OUTPUT_LIMIT)}... (cut, ${out.length} chars)` : out;
+export function agentEndMessage(parent: ParentContext, agentId: string, agentType: string, r?: AgentResult, error?: string): string {
+  const cut = capText(r?.output ?? "", parent, `${agentId}-output`);
   const err = r?.error ?? error;
   return [
     `Background agent ${agentId} ${agentType} ${r?.status ?? "stopped"} ($${(r?.usage.cost.total ?? 0).toFixed(4)}).`,
@@ -155,9 +162,10 @@ export function agentTool(getConfig: () => Config, description: string, deliver:
         if (!spec) await run; // it failed before starting (unknown agent, bad resume...): throws here
         const { agentId, model, warnings } = spec!;
         const agentType = params.subagent_type ?? DEFAULT_AGENT;
+        const parent = parentContext(ctx);
         run.then(
-          (r) => deliver(agentEndMessage(agentId, r.agentType, r)),
-          (e: Error) => deliver(agentEndMessage(agentId, agentType, undefined, e.message)),
+          (r) => deliver(agentEndMessage(parent, agentId, r.agentType, r)),
+          (e: Error) => deliver(agentEndMessage(parent, agentId, agentType, undefined, e.message)),
         );
         const result: AgentResult = { status: "running", agentId, agentType, model, output: "", usage: emptyUsage(), turns: 0, durationMs: 0, warnings };
         return {

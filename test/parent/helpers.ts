@@ -65,5 +65,16 @@ export function startParent(settings: Record<string, unknown> = {}) {
     stop() {
       child.kill("SIGKILL");
     },
+    // rpc abort: the same as Esc on main's turn
+    abort() {
+      child.stdin.write(`${JSON.stringify({ type: "abort" })}\n`);
+    },
+    // A graceful quit (SIGTERM: pi emits session_shutdown "quit"); resolves with the exit code.
+    quit(): Promise<number | null> {
+      return new Promise((resolve) => {
+        child.once("exit", (code) => resolve(code));
+        child.kill("SIGTERM");
+      });
+    },
   };
 }

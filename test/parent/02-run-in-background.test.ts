@@ -1,7 +1,8 @@
 // v3a ticket 02: run_in_background false (pins the script to the foreground) and true (the agent alone runs in the background).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentEndMessage, END_OUTPUT_LIMIT } from "../../src/agent-tool.ts";
+import { agentEndMessage } from "../../src/agent-tool.ts";
+import { RESULT_LIMIT } from "../../src/sessions.ts";
 import { scripts } from "../../src/background.ts";
 import { startParent, textOfMessage } from "./helpers.ts";
 
@@ -12,7 +13,7 @@ const isCustom = (e: any) => e.type === "message_end" && e.message.role === "cus
 
 test("script registry: false pins the script, true and later calls leave it, the first plain call moves it", () => {
   const moved: string[] = [];
-  const start = (callId: string) => scripts.start(callId, "sess", () => moved.push(callId));
+  const start = (callId: string) => scripts.start(callId, "sess", () => moved.push(callId), async () => {});
   const pinned = start("cA");
   scripts.agentStarting("cA/1", false);
   scripts.agentStarting("cA/2", undefined);
@@ -27,11 +28,12 @@ test("script registry: false pins the script, true and later calls leave it, the
 
 test("the end message of a background agent carries id, status, cost and the output, cut at the limit", () => {
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.0123 } };
-  const r: any = { status: "completed", agentId: "abc", agentType: "explore", output: "x".repeat(END_OUTPUT_LIMIT + 5), usage, warnings: [] };
-  const text = agentEndMessage("abc", "explore", r);
+  const r: any = { status: "completed", agentId: "abc", agentType: "explore", output: "x".repeat(RESULT_LIMIT + 5), usage, warnings: [] };
+  const parent: any = { sessionFile: undefined, sessionId: "s" };
+  const text = agentEndMessage(parent, "abc", "explore", r);
   assert.match(text, /^Background agent abc explore completed \(\$0\.0123\)\./);
-  assert.match(text, new RegExp(`\\.\\.\\. \\(cut, ${END_OUTPUT_LIMIT + 5} chars\\)`));
-  assert.match(agentEndMessage("abc", "explore", undefined, "aborted"), /stopped.*\nError: aborted/);
+  assert.match(text, new RegExp(`\\.\\.\\. \\(cut, ${RESULT_LIMIT + 5} chars; all of it is in `));
+  assert.match(agentEndMessage(parent, "abc", "explore", undefined, "aborted"), /stopped.*\nError: aborted/);
 });
 
 test("run_in_background:false pins the script: later calls do not move it and the codemode call returns the script's result", async () => {

@@ -241,6 +241,7 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
   "toolMap": { "WebFetch": "mcp__fetch__fetch" },  // merged over the built-in map
   "maxConcurrent": 20,                             // running children per pi process; extra calls queue. The first session's value wins for the process
   "childCodemode": "only",                         // "only" (default): children see only `codemode`; "inherit": v1 behaviour, direct tools
+  "backgroundScripts": true,                       // false: a script that starts an Agent waits for it, as in v2 (pi's own codemode)
   "panelLingerMs": 30000,                          // how long a finished subagent stays in the panel (the pty tests shorten it)
   "piCommand": "pi"
 }

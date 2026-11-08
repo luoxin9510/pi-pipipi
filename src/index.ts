@@ -1,7 +1,7 @@
 // pi-pipipi extension entry: register the `Agent` tool for codemode scripts.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { installBackground } from "./background.ts";
+import { installBackground, scripts } from "./background.ts";
 import { agentTool, describeAgents, parentContext } from "./agent-tool.ts";
 import { type Config, readConfig } from "./config.ts";
 import { discoverAgents } from "./discovery.ts";
@@ -22,17 +22,29 @@ export default function pipipi(pi: ExtensionAPI) {
     current = ctx;
   };
 
-  // Wraps codemode so a script that starts an Agent moves to the background (the backgroundScripts config key is ticket 03).
+  // Wraps codemode so a script that starts an Agent moves to the background (unless pipipi.backgroundScripts is false).
   // Delivery to main: a turn starts when it is idle, a steer when it runs.
+  let closing = false; // the session is ending: its stops send nothing to main
   const deliver = (content: string) =>
+    !closing &&
     pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" });
-  installBackground(pi, deliver);
+  installBackground(pi, deliver, () => config?.backgroundScripts !== false);
 
   pi.registerCommand("subagents", { description: "List this session's subagents", handler: (_args, ctx) => subagentsCommand(ctx) });
   pi.on("agent_start", track);
   pi.on("agent_end", track);
 
+  // Quit, reload, /new, resume and fork all emit session_shutdown before the runtime is torn down. Everything of this
+  // session still running in the background stops (agents end stopped, resumable) and main hears nothing about it.
+  pi.on("session_shutdown", async (_event, ctx) => {
+    closing = true;
+    const sessionId = ctx.sessionManager.getSessionId();
+    await scripts.stopAll(sessionId);
+    await registry.stopAll(registry.list(sessionId).filter((r) => r.status === "running").map((r) => r.id));
+  });
+
   pi.on("session_start", async (_event, ctx) => {
+    closing = false;
     track(_event, ctx);
     try {
       config = readConfig((pi.getSettings() as { pipipi?: unknown }).pipipi);
@@ -44,11 +56,11 @@ export default function pipipi(pi: ExtensionAPI) {
     bindHost({
       config: () => config!,
       // Main running: the note steers it (no new turn). Main idle: it is stored, and no turn starts.
-      note: (content) => pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? undefined : { deliverAs: "steer" }),
+      note: (content) => !closing && pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? undefined : { deliverAs: "steer" }),
     });
     const warnings = registry.rebuild(parentContext(ctx));
     const discovery = discoverAgents(ctx.cwd);
-    pi.registerTool(agentTool(() => config!, describeAgents(discovery), deliver));
+    pi.registerTool(agentTool(() => config!, describeAgents(discovery, config.backgroundScripts), deliver));
     if (ctx.hasUI) {
       installPanel(() => current!, config);
       for (const warning of [...warnings, ...discovery.warnings]) ctx.ui.notify(`pi-pipipi: ${warning}`, "warning");

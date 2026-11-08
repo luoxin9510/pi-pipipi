@@ -126,6 +126,22 @@ class Registry {
     return true;
   }
 
+  // Stop these subagents (those not running are skipped) and resolve when every one has ended. Each ends failed /
+  // "stopped by user" as with `stop`.
+  async stopAll(ids: string[]): Promise<void> {
+    const stopped = ids.filter((id) => this.stop(id));
+    if (stopped.length === 0) return;
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (stopped.some((id) => this.records.get(id)?.status === "running")) return;
+        unsubscribe();
+        resolve();
+      };
+      const unsubscribe = this.subscribe(check);
+      check();
+    });
+  }
+
   // True once, if a stop was requested for the exchange that just ended.
   stopRequested(id: string): boolean {
     return this.stopping.delete(id);

@@ -1,11 +1,14 @@
 // Child session directories, the agent meta file, and agent ids (spec 5, Sessions).
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ParentContext } from "./resolve.ts";
 
-export function subagentSessionDir(parent: ParentContext): string {
+type SessionRef = Pick<ParentContext, "sessionFile" | "sessionId">;
+
+export function subagentSessionDir(parent: SessionRef): string {
   return join(dirname(parent.sessionFile!), "subagents", parent.sessionId);
 }
 
@@ -26,4 +29,17 @@ export function storedAgentType(parent: ParentContext, resume: string): string {
 export function newAgentId(): string {
   const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
   return [...randomBytes(12)].map((b) => alphabet[b % alphabet.length]).join("");
+}
+
+export const RESULT_LIMIT = 8000;
+
+// Text for a message to main: as is up to RESULT_LIMIT chars, else the first RESULT_LIMIT chars plus the path of a file
+// holding all of it (the parent session's subagents dir; a temp dir for an in-memory session).
+export function capText(text: string, parent: SessionRef, name: string): string {
+  if (text.length <= RESULT_LIMIT) return text;
+  const dir = parent.sessionFile ? subagentSessionDir(parent) : mkdtempSync(join(tmpdir(), "pipipi-"));
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${name}-${Date.now()}.txt`);
+  writeFileSync(file, text);
+  return `${text.slice(0, RESULT_LIMIT)}\n... (cut, ${text.length} chars; all of it is in ${file})`;
 }
