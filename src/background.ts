@@ -116,7 +116,7 @@ class ScriptRegistry {
 export const scripts = new ScriptRegistry();
 
 const BACKGROUND_TEXT = (id: string) =>
-  `Script moved to the background (id ${id}): it started a subagent and keeps running. Its result arrives as a message when it ends. Do not wait or poll; end your turn or do other work.`;
+  `Script moved to the background (id ${id}) and keeps running. Its result arrives as a message when it ends. Do not wait or poll; end your turn or do other work.`;
 
 const textOf = (result: { content?: { type: string; text?: string }[] } | undefined) =>
   (result?.content ?? []).map((c) => c.text ?? "").join("");
