@@ -5,6 +5,10 @@ import { parse as parseYaml } from "yaml";
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
+// Claude Code's colour names.
+export const AGENT_COLORS = ["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"] as const;
+export type AgentColor = (typeof AGENT_COLORS)[number];
+
 export interface AgentDefinition {
   name: string;
   description: string;
@@ -17,15 +21,17 @@ export interface AgentDefinition {
   skills?: string[];
   omitClaudeMd?: boolean;
   codemode?: boolean; // false: this agent keeps direct tools instead of codemode-only
+  color?: AgentColor; // tints the agent's label in the panel and on its screen
   source: string;
   inert: string[];
+  warnings: string[]; // problems that do not skip the file (an unknown colour); shown once at discovery
 }
 
 export type ParseResult = { ok: true; def: AgentDefinition } | { ok: false; reason: string };
 
 // Tier B (mapped in v2) and tier C (no effect) fields: parsed, then reported as having no effect.
 const INERT_FIELDS = [
-  "mcpServers", "isolation", "autoCompactWindow", "color",
+  "mcpServers", "isolation", "autoCompactWindow",
   "permissionMode", "hooks", "memory", "background", "initialPrompt", "experimental",
 ];
 
@@ -73,6 +79,12 @@ export function parseDefinition(source: string, text: string): ParseResult {
   if (typeof f.description !== "string" || f.description.trim() === "") return { ok: false, reason: 'missing "description"' };
 
   try {
+    const warnings: string[] = [];
+    const rawColor = f.color;
+    const color = AGENT_COLORS.find((c) => c === rawColor);
+    if (rawColor !== undefined && rawColor !== null && color === undefined) {
+      warnings.push(`unknown color ${JSON.stringify(rawColor)} ignored (use ${AGENT_COLORS.join(", ")})`);
+    }
     const def: AgentDefinition = {
       name,
       description: f.description.trim(),
@@ -85,7 +97,9 @@ export function parseDefinition(source: string, text: string): ParseResult {
       skills: nameList(f.skills, "skills"),
       omitClaudeMd: optional<boolean>(f.omitClaudeMd, "omitClaudeMd", (v) => typeof v === "boolean", "true or false"),
       codemode: optional<boolean>(f.codemode, "codemode", (v) => typeof v === "boolean", "true or false"),
+      color,
       source,
+      warnings,
       inert: INERT_FIELDS.filter((k) => k in f),
     };
     return { ok: true, def };

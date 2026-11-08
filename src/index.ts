@@ -30,7 +30,7 @@ export default function pipipi(pi: ExtensionAPI) {
     pi.sendMessage({ customType: "pi-pipipi", content, display: true }, current!.isIdle() ? { triggerTurn: true } : { deliverAs: "steer" });
   installBackground(pi, deliver, () => config?.backgroundScripts !== false);
 
-  pi.registerCommand("subagents", { description: "List this session's subagents", handler: (_args, ctx) => subagentsCommand(ctx) });
+  pi.registerCommand("subagents", { description: "List this session's subagents, or `stop` to stop everything running", handler: (args, ctx) => subagentsCommand(ctx, args) });
   pi.on("agent_start", track);
   pi.on("agent_end", track);
 

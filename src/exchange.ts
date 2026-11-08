@@ -80,6 +80,7 @@ export function noteText(type: string, id: string, said: string[], run: RunResul
 export interface ExchangeInfo {
   type: string;
   description: string;
+  color?: string;
   said?: string; // the user's message that started this exchange
 }
 
@@ -94,7 +95,7 @@ export async function exchange(
   return registry.turn(id, signal, async () => {
     await slots.acquire(signal);
     try {
-      registry.begin(parent, { id, type: info.type, description: info.description, model: spec.model, thinking: spec.thinking });
+      registry.begin(parent, { id, type: info.type, description: info.description, model: spec.model, thinking: spec.thinking, color: info.color });
       let run: RunResult;
       try {
         run = await runChild(

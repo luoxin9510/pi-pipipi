@@ -1,12 +1,14 @@
 // The subagent panel (v2 spec, "TUI"): a widget below the editor with one row per subagent of the session, drawn from
 // the registry and redrawn on its changes. ↓ on an empty editor moves focus into it; while it has focus it consumes
-// the keys it uses (↑ ↓ enter x esc) and lets every other key through to pi.
+// the keys it uses (↑ ↓ enter x X esc) and lets every other key through to pi.
 
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Config } from "./config.ts";
 import { type ScriptRecord, scripts } from "./background.ts";
+import { tint } from "./color.ts";
 import { COLORS, ICONS, label, registry, type SubagentRecord, type SubagentStatus } from "./registry.ts";
+import { stopEverything } from "./stop-all.ts";
 import { openSubagentScreen } from "./subagent-screen.ts";
 
 export interface PanelOptions {
@@ -109,6 +111,8 @@ export class Panel {
     else if (matchesKey(data, "enter")) {
       const row = rows[this.selected]!;
       if (row.kind === "agent") this.open(row.record); // a script has no screen
+    } else if (data === "X" || matchesKey(data, "shift+x")) {
+      void stopEverything(this.sessionId); // every script and subagent of the session; the rows show the result
     } else if (data === "x") {
       // a row that is not running: nothing to stop
       const row = rows[this.selected]!;
@@ -145,7 +149,7 @@ export class Panel {
         parts = [t.fg(COLORS[status], `${ICONS[status]} ${s.state}`), `script ${s.id}`, t.fg("muted", `${running} agents running`), t.fg("muted", elapsed((s.endedAt ?? Date.now()) - s.startedAt)), t.fg("muted", `$${cost.toFixed(4)}`)];
       } else {
         const a = r.record;
-        parts = [t.fg(COLORS[a.status], `${ICONS[a.status]} ${a.status}`), label(a), t.fg("muted", `${a.turns} turns`)];
+        parts = [t.fg(COLORS[a.status], `${ICONS[a.status]} ${a.status}`), tint(a.color, label(a)), t.fg("muted", `${a.turns} turns`)];
         if (a.lastTool) parts.push(t.fg("muted", a.lastTool));
         parts.push(t.fg("muted", `$${a.usage.cost.total.toFixed(4)}`));
       }
@@ -154,7 +158,7 @@ export class Panel {
       const line = truncateToWidth(`${selected ? "▸" : " "} ${indent}${parts.join(" · ")}`, width);
       lines.push(selected ? t.bg("selectedBg", line) : line);
     });
-    if (this.focused) lines.push(t.fg("dim", "↑↓ select · enter open · x stop · esc back to editor"));
+    if (this.focused) lines.push(t.fg("dim", "↑↓ select · enter open · x stop · X stop all · esc back to editor"));
     return lines;
   }
 

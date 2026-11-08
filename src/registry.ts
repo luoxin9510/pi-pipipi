@@ -34,11 +34,15 @@ export interface SubagentRecord {
   endedAt?: number; // end of the latest exchange; unset while running
   model: string; // as resolved for the latest exchange ("" for v1 meta files)
   thinking: string;
+  color?: string; // the agent definition's colour name, if any
   sessionDir?: string; // where the child session and meta file live; unset for an in-memory parent
 }
 
 // "type(description)", or the type alone.
 export const label = (r: Pick<SubagentRecord, "type" | "description">): string => (r.description ? `${r.type}(${r.description})` : r.type);
+
+// "model · effort", leaving out what the record does not have (older meta files have no model).
+export const modelInfo = (r: Pick<SubagentRecord, "model" | "thinking">): string => [r.model, r.thinking].filter((s) => s !== "").join(" · ");
 
 export interface SubagentStart {
   id: string;
@@ -46,6 +50,7 @@ export interface SubagentStart {
   description: string;
   model: string;
   thinking: string;
+  color?: string;
 }
 
 // The file keeps v1's `agentType` key so older versions still read it.
@@ -233,6 +238,7 @@ class Registry {
         endedAt: ended ? mtime : meta.endedAt,
         model: meta.model ?? "",
         thinking: meta.thinking ?? "",
+        color: meta.color,
         sessionDir: dir,
       });
     }
