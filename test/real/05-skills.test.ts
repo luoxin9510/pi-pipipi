@@ -1,9 +1,9 @@
-// Ticket 05: preload skills.
+// Ticket 05: preload skills. The system prompt the child ran with is read from the session pi wrote.
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentFile, happyLines, loadTool, sandbox } from "./helpers.ts";
+import { agentFile, childSetup, loadTool, REPLY_OK, sandbox } from "./helpers.ts";
 
 const skill = (name: string | undefined, body: string) => (name ? `---\nname: ${name}\ndescription: x\n---\n${body}\n` : `${body}\n`);
 
@@ -15,17 +15,16 @@ test("skills are found in order, recursively, through symlinks, and preloaded af
   s.write(join(s.home, ".claude/skills/tdd/SKILL.md"), skill("tdd", "LOWER PRIORITY"));
   s.write(join(sub, ".pi/skills/notes/SKILL.md"), skill("notes", "Closest project dir."));
   s.write(join(s.home, ".pi/agent/skills/group/deep/folder-name/SKILL.md"), skill("review", "Review carefully."));
-  s.write(join(s.home, ".agents/skills/nested/SKILL.md"), skill("outer", "Outer skill.") );
+  s.write(join(s.home, ".agents/skills/nested/SKILL.md"), skill("outer", "Outer skill."));
   s.write(join(s.home, ".agents/skills/nested/inner/SKILL.md"), skill("inner", "Inside another skill: not a skill."));
   s.write(join(s.root, "elsewhere/linked/SKILL.md"), skill(undefined, "Linked skill, matched by folder name."));
   mkdirSync(join(s.repo, ".agents/skills"), { recursive: true });
   symlinkSync(join(s.root, "elsewhere/linked"), join(s.repo, ".agents/skills/linked"));
   s.write(join(sub, ".pi/agents/x.md"), agentFile("name: x\ndescription: d\nskills: tdd, notes, review, linked, outer, inner, ghost", "AGENT BODY"));
-  s.scenario({ lines: happyLines() });
 
-  const t = await loadTool({}, { cwd: sub });
-  const r = (await t.run({ subagent_type: "x" })).structuredContent;
-  const prompt = s.record().systemPrompt!;
+  const t = await loadTool({}, { cwd: sub, persist: join(s.root, "sessions") });
+  const r = await t.result({ subagent_type: "x", prompt: REPLY_OK });
+  const prompt = childSetup(t.sessionDir!, r.agentId).prompt;
 
   const order = ["AGENT BODY", "# Skill: tdd", "# Skill: notes", "# Skill: review", "# Skill: linked", "# Skill: outer", "# Environment"];
   const at = order.map((h) => prompt.indexOf(h));
@@ -37,32 +36,40 @@ test("skills are found in order, recursively, through symlinks, and preloaded af
   assert.match(prompt, /Review carefully\./);
   assert.match(prompt, /Linked skill, matched by folder name\./);
   assert.doesNotMatch(prompt, /Inside another skill/);
-  assert.match(prompt, /\n# Environment\nWorking directory: .*app\nPlatform: \w+\nDate: \d{4}-\d{2}-\d{2}$/);
+  assert.match(prompt, /\n# Environment\nWorking directory: .*app\nPlatform: \w+\nDate: \d{4}-\d{2}-\d{2}\n\nUse the `codemode` tool[^\n]*$/);
   assert.deepEqual(r.warnings, ['skill "inner" not found', 'skill "ghost" not found']);
   assert.equal(r.status, "completed", "missing skills do not stop the run");
 });
 
+test("a preloaded skill's content is available to the child", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".claude/skills/codeword/SKILL.md"), skill("codeword", "The codeword is PINEAPPLE-42."));
+  s.write(join(s.repo, ".pi/agents/x.md"), agentFile("name: x\ndescription: d\nskills: codeword", "Answer from your instructions."));
+  const t = await loadTool({}, { cwd: s.repo });
+  const r = await t.result({ subagent_type: "x", prompt: "What is the codeword? Reply with only the codeword. Do not call any tool." });
+  assert.equal(r.status, "completed", r.error ?? "");
+  assert.match(r.output, /PINEAPPLE-42/);
+});
+
 test("the system prompt replaces pi's default", async () => {
   const s = sandbox();
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: s.repo });
-  await t.run({});
-  const argv = s.record().argv;
-  assert.ok(argv.includes("--system-prompt"));
-  assert.equal(argv.includes("--append-system-prompt"), false);
+  const t = await loadTool({}, { cwd: s.repo, persist: join(s.root, "sessions") });
+  const r = await t.result({ prompt: REPLY_OK });
+  const prompt = childSetup(t.sessionDir!, r.agentId).prompt;
+  assert.match(prompt, /^[\s\S]+\n\n# Environment\nWorking directory: /);
+  assert.doesNotMatch(prompt, /pi documentation|Pi documentation|Available tools:/);
 });
 
 test("an unreadable skills directory counts as empty: the skill is reported not found", async () => {
   const s = sandbox();
   s.write(join(s.repo, ".pi/skills/locked/SKILL.md"), skill("hidden", "Secret."));
   s.write(join(s.repo, ".pi/agents/x.md"), agentFile("name: x\ndescription: d\nskills: hidden"));
-  s.scenario({ lines: happyLines() });
   const t = await loadTool({}, { cwd: s.repo });
   chmodSync(join(s.repo, ".pi/skills/locked"), 0o000);
   try {
-    const r = (await t.run({ subagent_type: "x" })).structuredContent;
+    const r = await t.result({ subagent_type: "x", prompt: REPLY_OK });
     assert.deepEqual(r.warnings, ['skill "hidden" not found']);
-    assert.equal(r.status, "completed");
+    assert.equal(r.status, "completed", r.error ?? "");
   } finally {
     chmodSync(join(s.repo, ".pi/skills/locked"), 0o755);
   }
@@ -75,10 +82,9 @@ test("a looping or dangling symlink in a skills directory does not break the cal
   symlinkSync("loop", join(skills, "loop"));
   symlinkSync(join(s.root, "nowhere"), join(skills, "dangling"));
   s.write(join(s.repo, ".pi/agents/x.md"), agentFile("name: x\ndescription: d\nskills: good, ghost"));
-  s.scenario({ lines: happyLines() });
-  const t = await loadTool({}, { cwd: s.repo });
-  const r = (await t.run({ subagent_type: "x" })).structuredContent;
-  assert.equal(r.status, "completed");
-  assert.match(s.record().systemPrompt!, /Fine\./);
+  const t = await loadTool({}, { cwd: s.repo, persist: join(s.root, "sessions") });
+  const r = await t.result({ subagent_type: "x", prompt: REPLY_OK });
+  assert.equal(r.status, "completed", r.error ?? "");
+  assert.match(childSetup(t.sessionDir!, r.agentId).prompt, /Fine\./);
   assert.deepEqual(r.warnings, ['skill "ghost" not found']);
 });

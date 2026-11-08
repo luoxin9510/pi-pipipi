@@ -33,6 +33,8 @@ export interface Scenario {
   delayMs?: number;
   hang?: boolean;
   sessionFile?: string;
+  promptError?: string; // answer the prompt command with success: false
+  abortSettles?: boolean; // answer an rpc abort with agent_settled aborted: true
 }
 
 // A temp repo (with .git) and a temp HOME, so discovery never sees the real user dirs.
@@ -58,7 +60,7 @@ export function sandbox() {
     scenario(s: Scenario) {
       writeFileSync(scenarioFile, JSON.stringify(s));
     },
-    record(): { argv: string[]; depth?: string; stdin: string; cwd: string; systemPrompt?: string; promptFile?: string } {
+    record(): { argv: string[]; depth?: string; commands: { type: string; message?: string }[]; cwd: string; systemPrompt?: string } {
       return JSON.parse(readFileSync(recordFile, "utf8"));
     },
   };
@@ -86,13 +88,14 @@ export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
   const pi = {
     on: (event: string, h: Function) => (handlers[event] ??= []).push(h),
     registerTool: (t: any) => (tools[t.name] = t),
+    registerCommand: () => {},
     getSettings: () => ({ pipipi: { piCommand: FAKE_PI, ...settings } }),
   };
   pipipi(pi as any);
   const ctx = {
     cwd: c.cwd,
     hasUI: true,
-    ui: { notify: (m: string) => notes.push(m) },
+    ui: { notify: (m: string) => notes.push(m), setWidget: () => {}, onTerminalInput: () => () => {}, custom: async () => {} },
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-opus-5-5" },
     thinkingLevel: c.thinkingLevel ?? "medium",
     isProjectTrusted: () => c.trusted ?? true,

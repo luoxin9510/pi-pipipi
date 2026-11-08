@@ -103,3 +103,42 @@ Background runs, fork, worktree isolation, hooks, MCP servers per agent, memory,
 18. The concurrency limit is per pi process.
 19. A first run writes `<agentId>.json` (`{ agentType }`) next to the child session. Resume without `subagent_type` uses the stored type; a different `subagent_type` throws.
 20. Prompts over 100 KB go to the child as `@<tmpfile>` (Linux caps one argv string at 128 KiB). Documented.
+
+## Grill 3 (2026-11-08): v2, viewing and entering subagents; codemode-only children
+
+Facts that shaped it (pi 1.5.0): an `Agent` call made from a codemode script gets no TUI row of its own (only a
+one-line summary under the codemode row), so the UI is ours to build from `tool_execution_*` events. pi's
+`switchSession` aborts the running turn of the process, so it cannot be used while main runs. `codemode.mode` is read
+from settings only (no flag). A `--tools` allowlist does not drop MCP tools.
+
+Viewing (as in Claude Code):
+1. Only the current parent session's subagents. An in-memory parent: "cannot view" notice.
+2. A panel below the editor: one row per subagent (type, description, status, turns, last tool, cost). Running rows
+   stay; finished rows stay 30 s. `/subagents` lists all of the session's subagents, old ones included.
+3. Empty editor + ↓ focuses the panel; ↑/↓ select; Enter enters; `x` stops a running subagent. A stopped child
+   returns `status: "failed"`, `error: "stopped by user"` to the script (no throw); main may still resume it.
+4. Standalone in pi-pipipi; no dependency on pi-roost.
+
+Entering:
+5. A full-screen subagent screen in the parent's TUI, not `switchSession`: header `main › <type>(<description>)`,
+   the transcript drawn with pi's own message components (live while it runs), an editor at the bottom. Main keeps
+   running underneath. Back: `/main`, or the `main` row in the panel.
+6. Commands inside: `/model` (via rpc, this conversation only), `/stop`, `/main`.
+7. Typing to a running subagent steers it (rpc `steer`); to a finished one resumes it.
+8. One process per subagent at a time; whoever comes second (the user or main's script) queues; no error.
+9. After each exchange, main gets a short note ("user said …; it replied …"): as a steer while main runs, stored
+   without triggering a turn while main is idle.
+
+Children:
+10. Children run as `pi --mode rpc`; the prompt goes over stdin (the `@file` path for long prompts goes away).
+    The fake pi gains an rpc mode.
+11. `pipipi.childCodemode`: `"only"` (default: the model sees only `codemode`) or `"inherit"` (v1 behaviour).
+    An agent file may set `codemode: false` (pi-only field).
+12. With `tools`, a child gets `--tools codemode,<mapped tools>`; the allowlist also binds inside scripts (an eval
+    checks a read-only agent cannot write from a script).
+13. Every child system prompt ends with a line telling it to use codemode and batch independent calls in one script.
+14. A comparison eval (codemode-only vs direct tools: turns, time, cost) goes in the README. Default stays `"only"`
+    unless the data is clearly worse (then back to the owner).
+15. A `tools` list without `mcp__` entries also passes `--exclude-tools mcp__*`.
+
+Process: one v2 spec, then the Matt Pocock flow (to-spec → to-tickets → implement → code-review → pr).

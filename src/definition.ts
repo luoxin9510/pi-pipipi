@@ -16,6 +16,7 @@ export interface AgentDefinition {
   maxTurns?: number;
   skills?: string[];
   omitClaudeMd?: boolean;
+  codemode?: boolean; // false: this agent keeps direct tools instead of codemode-only
   source: string;
   inert: string[];
 }
@@ -83,6 +84,7 @@ export function parseDefinition(source: string, text: string): ParseResult {
       maxTurns: optional<number>(f.maxTurns, "maxTurns", (v) => Number.isInteger(v) && (v as number) > 0, "a positive integer"),
       skills: nameList(f.skills, "skills"),
       omitClaudeMd: optional<boolean>(f.omitClaudeMd, "omitClaudeMd", (v) => typeof v === "boolean", "true or false"),
+      codemode: optional<boolean>(f.codemode, "codemode", (v) => typeof v === "boolean", "true or false"),
       source,
       inert: INERT_FIELDS.filter((k) => k in f),
     };

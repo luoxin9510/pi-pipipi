@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { registry } from "../src/registry.ts";
 import { check, childAgents, costOf, directTool, type EvalCase, fixture, HAIKU, onHaiku, parentOnHaiku, runParent } from "./harness.ts";
 
 const agent = (fields: string, body: string) => `---\n${fields}\n---\n${body}\n`;
@@ -239,6 +240,34 @@ export const cases: EvalCase[] = [
           check("right words", ["RED", "GREEN", "BLUE"].every((w, i) => rs[i].output.includes(w)), rs.map((r) => r.output)),
           check("ran concurrently (wall < 0.7 × sum)", wall < serial * 0.7, { wall, serial }),
           onHaiku(...rs),
+        ],
+      };
+    },
+  },
+  {
+    name: "steer changes a running subagent's course",
+    kind: "direct",
+    async run(signal) {
+      const cwd = fixture();
+      const t = await directTool(cwd, signal);
+      const run = t.call({ prompt: "Step 1: run the bash command 'sleep 10; echo $RANDOM' and look at the number it prints. Step 2, only in a separate later tool call: create the file finished.txt containing that number. Then reply DONE." });
+      // wait until the child is running a tool and can be steered
+      for (const end = Date.now() + 60_000; ; await new Promise((r) => setTimeout(r, 50))) {
+        const rec = registry.list(t.sessionId)[0];
+        if (rec?.lastTool !== undefined && registry.handle(rec.id)) break;
+        if (Date.now() > end) throw new Error("child never started a tool");
+      }
+      const id = registry.list(t.sessionId)[0]!.id;
+      const sent = registry.handle(id)!.send({ type: "steer", message: "STOP. Do not run anything else and do not create any file. Your final message must be exactly the word TOKEN-xyz and nothing more." });
+      const r = await run;
+      return {
+        cost: costOf(r),
+        checks: [
+          check("steer was sent", sent === true),
+          check("completed", r.status === "completed", r.error),
+          check("final reply is the token", r.output.includes("TOKEN-xyz") && !r.output.includes("DONE"), r.output),
+          check("planned file not written", !existsSync(join(cwd, "finished.txt"))),
+          onHaiku(r),
         ],
       };
     },

@@ -7,8 +7,9 @@ import type { Config } from "./config.ts";
 import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ParentContext, resolveChild } from "./resolve.ts";
-import { storedAgentType, writeAgentMeta } from "./sessions.ts";
-import { runChild, type RunResult, type Status, STATUSES, usageSchema } from "./runner.ts";
+import { exchange } from "./exchange.ts";
+import { storedAgentType } from "./sessions.ts";
+import { type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
 
@@ -39,47 +40,6 @@ export const outputSchema = Type.Object({
 });
 export type AgentResult = Omit<Static<typeof outputSchema>, "status"> & { status: Status };
 
-// Process-wide: every session in this pi process shares the limit, which the first session's config fixes.
-class Semaphore {
-  limit: number | undefined;
-  private running = 0;
-  private waiting: (() => void)[] = [];
-
-  async acquire(signal: AbortSignal | undefined): Promise<void> {
-    if (this.running < this.limit!) {
-      this.running++;
-      return;
-    }
-    await new Promise<void>((resolve, reject) => {
-      const go = () => {
-        signal?.removeEventListener("abort", cancel);
-        this.running++;
-        resolve();
-      };
-      const cancel = () => {
-        this.waiting = this.waiting.filter((w) => w !== go);
-        reject(new Error("aborted"));
-      };
-      if (signal?.aborted) return reject(new Error("aborted"));
-      signal?.addEventListener("abort", cancel, { once: true });
-      this.waiting.push(go);
-    });
-  }
-
-  release(): void {
-    this.running--;
-    const next = this.waiting.shift();
-    if (next) next();
-  }
-}
-
-const slots = new Semaphore();
-
-// Only the first call in the process sets the limit; later sessions' maxConcurrent is ignored.
-export function limitConcurrency(max: number): void {
-  slots.limit ??= max;
-}
-
 export function describeAgents({ agents }: Discovery): string {
   const list = [...agents.values()].map((a) => `- ${a.name}: ${a.description}`).join("\n");
   return [
@@ -92,7 +52,7 @@ export function describeAgents({ agents }: Discovery): string {
   ].join("\n");
 }
 
-function parentContext(ctx: ExtensionContext): ParentContext {
+export function parentContext(ctx: ExtensionContext): ParentContext {
   return {
     model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
     thinking: ctx.thinkingLevel ?? "off",
@@ -136,19 +96,12 @@ async function executeAgent(
   }
   for (const field of def.inert) spec.warnings.push(inertNotice(field));
 
-  await slots.acquire(signal);
-  let run: RunResult;
-  try {
-    if (parent.sessionFile && input.resume === undefined) writeAgentMeta(parent, spec.agentId, agentType);
-    let last = "";
-    run = await runChild(spec, signal, (p) => {
-      const text = `${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`;
-      if (text !== last) onUpdate?.(text); // a turn's end repeats the update from its last tool start
-      last = text;
-    });
-  } finally {
-    slots.release();
-  }
+  let last = "";
+  const { aborted: _aborted, ...run } = await exchange(parent, spec, { type: agentType, description: input.description }, signal, (p) => {
+    const text = `${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`;
+    if (text !== last) onUpdate?.(text); // a turn's end repeats the update from its last tool start
+    last = text;
+  });
 
   return { agentId: spec.agentId, agentType, model: spec.model, warnings: spec.warnings, ...run };
 }
