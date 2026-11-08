@@ -1,7 +1,7 @@
-// Run one child pi process and read its JSON event stream (spec 6).
+// Run one child as a `pi --mode rpc` process: send the prompt over stdin, read the JSONL event stream (spec 6).
 
 import { type ChildProcessByStdio, spawn } from "node:child_process";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,8 +41,6 @@ export interface Progress {
   lastTool?: string;
 }
 
-// Linux caps one argv string at 128 KiB. Longer prompts go through a file.
-const MAX_PROMPT_ARG = 100_000;
 const KILL_GRACE_MS = 5000;
 // How long a child may take to exit after agent_settled, and to settle after its last allowed turn.
 const SETTLE_GRACE_MS = 2000;
@@ -73,27 +71,30 @@ interface AssistantMessage {
   errorMessage?: string;
 }
 
-export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onProgress: (p: Progress) => void): Promise<RunResult> {
+// Commands a live child accepts over its rpc stdin (docs/rpc-commands.md). The seam for the subagent registry:
+// it can steer, abort or switch the model of a running child.
+export interface ChildHandle {
+  send(command: { type: "steer"; message: string } | { type: "abort" } | { type: "set_model"; provider: string; modelId: string }): void;
+}
+
+export function runChild(
+  spec: ChildSpec,
+  signal: AbortSignal | undefined,
+  onProgress: (p: Progress) => void,
+  onStart?: (handle: ChildHandle) => void,
+): Promise<RunResult> {
   if (signal?.aborted) return Promise.reject(new Error("aborted"));
 
   const started = Date.now();
   const tmp = mkdtempSync(join(tmpdir(), "pipipi-"));
   const systemPromptFile = join(tmp, "system-prompt.md");
   writeFileSync(systemPromptFile, spec.systemPrompt);
-  // pi reads an argument starting with "@" as a file, even after `--`: a newline in front makes it text.
-  let promptArg = spec.prompt.startsWith("@") ? `\n${spec.prompt}` : spec.prompt;
-  if (Buffer.byteLength(spec.prompt) > MAX_PROMPT_ARG) {
-    const promptFile = join(tmp, "prompt.md");
-    writeFileSync(promptFile, spec.prompt);
-    promptArg = `@${promptFile}`;
-  }
-  // `--` keeps a prompt that starts with "-" from being read as a flag.
-  const argv = [...spec.args, "--system-prompt", systemPromptFile, "--", promptArg];
+  const argv = [...spec.args, "--system-prompt", systemPromptFile];
 
   return new Promise((resolve, reject) => {
-    let child: ChildProcessByStdio<null, Readable, Readable>;
+    let child: ChildProcessByStdio<Writable, Readable, Readable>;
     try {
-      child = spawn(spec.command, argv, { cwd: spec.cwd, env: spec.env, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(spec.command, argv, { cwd: spec.cwd, env: spec.env, stdio: ["pipe", "pipe", "pipe"] });
     } catch (err) {
       // spawn throws synchronously for arguments it rejects, such as a NUL byte in the prompt
       rmSync(tmp, { recursive: true, force: true });
@@ -101,11 +102,19 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
       return resolve({ status: "failed", output: "", usage: emptyUsage(), turns: 0, durationMs: Date.now() - started, error });
     }
 
+    // rpc: one JSON command per LF-terminated line. A child that already exited makes the write fail: ignore it,
+    // the exit is handled by "close".
+    child.stdin.on("error", () => {});
+    const send = (command: Record<string, unknown>) => {
+      if (!child.stdin.writable) return;
+      child.stdin.write(`${JSON.stringify(command)}\n`);
+    };
+    const PROMPT_ID = "pipipi-prompt";
+
     const usage = emptyUsage();
     let output = "";
     let turns = 0;
     let lastTool: string | undefined;
-    let records = 0;
     let settled = false;
     let assistantError: string | undefined;
     let turnStop: string | undefined; // stopReason of the assistant message in the turn in progress
@@ -119,6 +128,7 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined; // after settle or the last allowed turn
     let stoppedAfterSettle = false; // settled but did not exit; we stopped it
+    let promptError: string | undefined; // pi rejected our prompt command
 
     const stopChild = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
@@ -127,9 +137,17 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
       killTimer.unref();
     };
 
+    // Ask the child to stop its run (rpc abort); it settles with aborted: true and we close stdin. Signals only if
+    // it does not settle in time.
+    const abortChild = () => {
+      send({ type: "abort" });
+      if (graceTimer) clearTimeout(graceTimer);
+      graceTimer = setTimeout(stopChild, SETTLE_GRACE_MS);
+    };
+
     const onAbort = () => {
       parentAborted = true;
-      stopChild();
+      abortChild();
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -142,10 +160,14 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
         return stopChild();
       }
       try {
-        records++;
-        if (records === 1 && event.type !== "session") {
-          streamError = `pi stream did not start with a session header: ${line.slice(0, 200)}`;
-          return stopChild();
+        // rpc has no session header. Responses to our commands: only a failed prompt matters (steer and abort
+        // failures surface as the run going on or not settling).
+        if (event.type === "response") {
+          if (event.id === PROMPT_ID && event.success !== true) {
+            promptError = (event.error as string | undefined) ?? "pi rejected the prompt";
+            stopChild();
+          }
+          return;
         }
         // After the last allowed turn only the end of the run matters, but its cost still counts.
         if (hitMaxTurns && event.type !== "agent_settled") {
@@ -182,10 +204,10 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
               if (stop === "toolUse") {
                 // The turn called tools, so the run wants another turn: it is cut short here.
                 cutShort = true;
-                stopChild();
+                abortChild();
               } else {
                 // Let the run settle by itself if this was its last turn anyway.
-                graceTimer = setTimeout(stopChild, SETTLE_GRACE_MS);
+                graceTimer = setTimeout(abortChild, SETTLE_GRACE_MS);
               }
             }
             break;
@@ -194,6 +216,8 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
             settled = true;
             if (event.aborted === true) childAborted = true;
             if (graceTimer) clearTimeout(graceTimer);
+            // The run is over: closing stdin shuts pi down. Signals if it does not exit.
+            child.stdin.end();
             graceTimer = setTimeout(() => {
               stoppedAfterSettle = true;
               stopChild();
@@ -233,17 +257,21 @@ export function runChild(spec: ChildSpec, signal: AbortSignal | undefined, onPro
       if (parentAborted) return reject(new Error("aborted"));
 
       const base = { output, usage, turns, durationMs: Date.now() - started };
-      if (hitMaxTurns && (cutShort || !settled)) return resolve({ status: "partial", ...base });
+      if (hitMaxTurns && (cutShort || !settled || childAborted)) return resolve({ status: "partial", ...base });
       const stderrTail = stderr.trimEnd().split("\n").slice(-STDERR_LINES).join("\n");
       const error =
         spawnError?.message ??
         streamError ??
+        promptError ??
         assistantError ??
         (childAborted ? "child run was aborted" : undefined) ??
         (code !== 0 && !stoppedAfterSettle ? stderrTail || `pi exited with code ${code}` : undefined) ??
         (!settled ? stderrTail || "pi exited before the run settled" : undefined);
       resolve(error === undefined ? { status: "completed", ...base } : { status: "failed", ...base, error });
     };
+
+    send({ id: PROMPT_ID, type: "prompt", message: spec.prompt });
+    onStart?.({ send });
 
     child.on("error", (err) => finish(null, new Error(`could not start ${spec.command}: ${err.message}`)));
     child.on("close", (code) => finish(code));

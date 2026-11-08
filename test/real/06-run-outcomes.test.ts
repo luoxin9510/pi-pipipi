@@ -65,7 +65,7 @@ test("a missing pi binary fails the run", async () => {
   assert.match(r.error!, /could not start/);
 });
 
-test("a prompt that makes spawn throw synchronously fails the run and removes the temp dir", async () => {
+test("a prompt with a NUL byte (impossible in argv) reaches the child over rpc, and the temp dir is removed", async () => {
   const s = sandbox();
   const tmp = join(s.root, "tmp");
   mkdirSync(tmp);
@@ -73,27 +73,26 @@ test("a prompt that makes spawn throw synchronously fails the run and removes th
   process.env.TMPDIR = tmp;
   try {
     const t = await loadTool({}, { cwd: s.repo });
-    const r = await t.result({ prompt: "nul \0 byte" });
-    assert.equal(r.status, "failed");
-    assert.match(r.error!, /could not start .*NUL|could not start .*null/i);
-    assert.deepEqual(readdirSync(tmp), []);
+    const r = await t.result({ prompt: "nul \0 byte. Reply with the single word OK. Do not call any tool." });
+    assert.equal(r.status, "completed", r.error ?? "");
+    assert.deepEqual(readdirSync(tmp).filter((f) => f.startsWith("pipipi-")), []); // pi may cache under TMPDIR
   } finally {
     if (oldTmp === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = oldTmp;
   }
 });
 
-test("a prompt over 100 KB reaches the child through a file", async () => {
+test("a prompt over 150 KB reaches the child intact over rpc", async () => {
   const s = sandbox();
   const t = await loadTool({}, { cwd: s.repo, persist: join(s.root, "sessions") });
-  const filler = "alpha beta gamma delta\n".repeat(4400); // a little over 100,000 bytes
+  const filler = "alpha beta gamma delta\n".repeat(6800); // a little over 150,000 bytes
   const prompt = `The secret code is OWL-5150. Reply with only the secret code. Ignore everything after this line.\n${filler}`;
-  assert.ok(Buffer.byteLength(prompt) > 100_000);
+  assert.ok(Buffer.byteLength(prompt) > 150_000);
   const r = await t.result({ prompt });
   assert.equal(r.status, "completed", r.error ?? "");
   assert.match(r.output, /OWL-5150/);
   const users = sessionEntries(t.sessionDir!, r.agentId).filter((e) => e.type === "message" && e.message.role === "user");
-  assert.ok(JSON.stringify(users[0]!.message.content).includes("OWL-5150"), "the whole prompt text arrived, not a file name");
+  assert.ok(JSON.stringify(users[0]!.message.content).includes("OWL-5150"), "the whole prompt text arrived");
 });
 
 test("a prompt starting with a dash or an @ is text for pi, not a flag or a file", async () => {

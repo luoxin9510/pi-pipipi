@@ -78,7 +78,7 @@ test("maxTurns reached on a turn that called tools is partial, even if the next 
   assert.equal(r.output, "reading a.txt");
 });
 
-test("12: provider error, non-zero exit, garbage line, missing session header -> failed with error", async () => {
+test("12: provider error, non-zero exit, garbage line, failed prompt response -> failed with error", async () => {
   const s = sandbox();
   const t = await loadTool({}, { cwd: s.repo });
   const cases: [Parameters<typeof s.scenario>[0], RegExp][] = [
@@ -86,7 +86,7 @@ test("12: provider error, non-zero exit, garbage line, missing session header ->
     [{ lines: [ev.session()], exitCode: 2, stderr: "line a\nboom: no API key\n" }, /boom: no API key/],
     [{ lines: [ev.session()], exitCode: 3 }, /pi exited with code 3/],
     [{ lines: [ev.session(), "not json at all", ...happyLines().slice(1)] }, /invalid JSON from pi: not json at all/],
-    [{ lines: [ev.assistant("hi"), ev.settled()] }, /did not start with a session header/],
+    [{ lines: [], promptError: "No API key for anthropic" }, /^No API key for anthropic$/],
     [{ lines: [ev.session(), ev.assistant("hi")] }, /exited before the run settled/],
   ];
   for (const [scenario, error] of cases) {
@@ -96,6 +96,36 @@ test("12: provider error, non-zero exit, garbage line, missing session header ->
     assert.equal(res.structuredContent.status, "failed");
     assert.match(res.structuredContent.error, error);
   }
+});
+
+test("the prompt goes over stdin as an rpc prompt command, whatever its size", async () => {
+  const s = sandbox();
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool({}, { cwd: s.repo });
+  const prompt = `@not-a-file ${"x".repeat(300_000)}`;
+  const r = (await t.run({ prompt })).structuredContent;
+  assert.equal(r.status, "completed");
+  const rec = s.record();
+  assert.ok(rec.argv.includes("rpc") && !rec.argv.includes("-p"));
+  assert.ok(!rec.argv.some((a) => a.includes("xxxx")), "no prompt text in argv");
+  assert.deepEqual(rec.commands.map((c) => c.type), ["prompt"]);
+  assert.equal(rec.commands[0]!.message, prompt);
+});
+
+test("maxTurns stops the child with an rpc abort; when it settles, no signal is needed", async () => {
+  const s = sandbox();
+  s.write(join(s.repo, ".pi/agents/one.md"), agentFile("name: one\ndescription: d\nmaxTurns: 1"));
+  s.scenario({
+    lines: [ev.session(), ev.assistant("t1", usage(10, 5, 0.01), { stopReason: "toolUse" }), ev.tool("read"), ev.turnEnd({ stopReason: "toolUse" })],
+    hang: true,
+    abortSettles: true,
+  });
+  const t = await loadTool({}, { cwd: s.repo });
+  const started = Date.now();
+  const r = (await t.run({ subagent_type: "one" })).structuredContent;
+  assert.equal(r.status, "partial");
+  assert.deepEqual(s.record().commands.map((c) => c.type), ["prompt", "abort"]);
+  assert.ok(Date.now() - started < 3500, "abort settled the run; only the stdin-close grace was left");
 });
 
 test("12a: agent_settled with aborted: true -> failed with a clear error", async () => {

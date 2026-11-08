@@ -134,7 +134,7 @@ export function resolveChild(
   const session = parent.sessionFile ? ["--session-dir", subagentSessionDir(parent), "--session-id", agentId] : ["--no-session"];
 
   const args = [
-    "--mode", "json", "-p",
+    "--mode", "rpc",
     "--model", model,
     "--thinking", thinking,
     ...(codemode ? ["-e", CODEMODE_EXTENSION] : []),

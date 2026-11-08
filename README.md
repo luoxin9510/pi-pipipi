@@ -86,8 +86,8 @@ Without Anthropic credentials, haiku (and so every agent by default) fails with 
 
 Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume? }`.
 `subagent_type` defaults to `general-purpose`. `run_in_background`, `isolation` and `name` are accepted and ignored
-with a warning. Prompts over 100 KB are handed to the child as an attached file (`@file`), because Linux limits one
-command-line argument to 128 KiB.
+with a warning. Children run as `pi --mode rpc` and get the prompt over stdin, so prompts
+of any size work.
 
 Result:
 

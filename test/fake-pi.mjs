@@ -1,36 +1,62 @@
 #!/usr/bin/env node
-// Scripted stand-in for the pi binary.
-// FAKE_PI_SCENARIO: path to JSON { lines: string[] (raw stdout lines), exitCode?, stderr?, delayMs?, hang?, sessionFile? }
-// FAKE_PI_RECORD: path where argv, PIPIPI_DEPTH and the system prompt text are written as JSON.
+// Scripted stand-in for `pi --mode rpc`.
+// FAKE_PI_SCENARIO: path to JSON { lines: string[] (raw stdout lines), exitCode?, stderr?, delayMs?, hang?, sessionFile?,
+//   promptError?: string (answer the prompt command with success: false), abortSettles?: boolean (answer rpc abort with
+//   agent_settled aborted: true) }
+// Like pi, it waits for a `prompt` command on stdin, answers it with a response, then plays the lines. Without `hang` it
+// exits after the lines; with `hang` it stays up and ignores stdin closing.
+// FAKE_PI_RECORD: path where argv, PIPIPI_DEPTH, the system prompt text and the commands received are written as JSON.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { createInterface } from "node:readline";
 
 const argv = process.argv.slice(2);
 const scenario = JSON.parse(readFileSync(process.env.FAKE_PI_SCENARIO, "utf8"));
 const sp = argv.indexOf("--system-prompt");
-const promptArg = argv[argv.length - 1];
-writeFileSync(
-  process.env.FAKE_PI_RECORD,
-  JSON.stringify({
-    argv,
-    depth: process.env.PIPIPI_DEPTH,
-    // With stdin closed this reads EOF at once; an open pipe would block the run (and fail the test by timeout).
-    stdin: readFileSync(0, "utf8"),
-    cwd: process.cwd(),
-    systemPrompt: sp === -1 ? undefined : readFileSync(argv[sp + 1], "utf8"),
-    promptFile: promptArg.startsWith("@") ? readFileSync(promptArg.slice(1), "utf8") : undefined,
-  }),
-);
+const commands = [];
+const record = () =>
+  writeFileSync(
+    process.env.FAKE_PI_RECORD,
+    JSON.stringify({
+      argv,
+      depth: process.env.PIPIPI_DEPTH,
+      commands,
+      cwd: process.cwd(),
+      systemPrompt: sp === -1 ? undefined : readFileSync(argv[sp + 1], "utf8"),
+    }),
+  );
+record();
 if (scenario.sessionFile) {
   mkdirSync(dirname(scenario.sessionFile), { recursive: true });
   writeFileSync(scenario.sessionFile, "");
 }
 if (scenario.stderr) process.stderr.write(scenario.stderr);
 
+const out = (o) => process.stdout.write((typeof o === "string" ? o : JSON.stringify(o)) + "\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-for (const line of scenario.lines) {
-  process.stdout.write(line + "\n");
-  if (scenario.delayMs) await sleep(scenario.delayMs);
-}
-if (scenario.hang) setInterval(() => {}, 1000);
-else process.exitCode = scenario.exitCode ?? 0;
+let played = false;
+
+const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+rl.on("line", async (line) => {
+  const cmd = JSON.parse(line);
+  commands.push(cmd);
+  record();
+  if (cmd.type === "abort") {
+    out({ id: cmd.id, type: "response", command: "abort", success: true });
+    if (scenario.abortSettles) out({ type: "agent_settled", aborted: true });
+    return;
+  }
+  if (cmd.type !== "prompt" || played) return;
+  played = true;
+  if (scenario.promptError) {
+    out({ id: cmd.id, type: "response", command: "prompt", success: false, error: scenario.promptError });
+  } else {
+    out({ id: cmd.id, type: "response", command: "prompt", success: true, data: { disposition: "started" } });
+  }
+  for (const l of scenario.lines) {
+    out(l);
+    if (scenario.delayMs) await sleep(scenario.delayMs);
+  }
+  if (scenario.hang) setInterval(() => {}, 1000);
+  else process.exit(scenario.exitCode ?? 0);
+});
