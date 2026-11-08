@@ -120,6 +120,18 @@ The child gets the worktree as its cwd (`spawn` option) and in the prompt's `Wor
 stay in the parent's `subagents/<parent session id>/`. The meta file `<agentId>.json` gains
 `worktree: { root, path, branch, base }`.
 
+### Agent memory (`memory` in the agent file, `src/resolve.ts`)
+
+No pi contract; the host needs Read, Write and Edit tools (mapped through `toolMap`) and the same two `rev-parse`
+commands as above (`--show-toplevel`, `--git-path info/exclude`). Directories: `~/.claude/agent-memory/<name>/`,
+`<repository root of the parent cwd>/.claude/agent-memory/<name>/`, `.../.claude/agent-memory-local/<name>/` (outside a
+repository the parent cwd replaces the root and no exclude is written; a name with a path separator is an error). Created
+with `mkdir -p` when the child is resolved. Local scope appends `/.claude/agent-memory-local/<name>/` to the info/exclude
+file once. The prompt gets a `# Persistent memory` section after the skills and before `# Environment`: the directory, our
+instructions (read-only wording when Write or Edit is denied) and the head of `MEMORY.md` (first 200 lines, then at most
+25000 bytes, a cut multibyte character dropped whole, plus a truncation note). `Read`, `Write`, `Edit` are added to the
+`--tools` list unless `disallowedTools` denies them; Write or Edit denied means read-only memory plus a result warning.
+
 ## 3. Extension API (parent side)
 
 | API | Where | If missing |

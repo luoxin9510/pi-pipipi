@@ -52,7 +52,8 @@ Invalid files are skipped with a warning.
 | `omitClaudeMd` | `--no-context-files` |
 | `color` | `red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink` or `cyan` tints the agent's label in the panel and on its screen header (fixed 256-colour escapes; the status icon and text keep their status colours). Any other value warns once and is ignored. |
 | `isolation` | `worktree` runs every call of this agent in its own git worktree; the call's `isolation` wins. See [Worktree isolation](#worktree-isolation). |
-| `mcpServers`, `autoCompactWindow`, `permissionMode`, `hooks`, `memory`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
+| `memory` | `user`, `project` or `local` gives the agent a persistent directory. See [Agent memory](#agent-memory). |
+| `mcpServers`, `autoCompactWindow`, `permissionMode`, `hooks`, `background`, `initialPrompt`, `experimental` | Accepted, no effect yet (warning). |
 
 ## Model selection
 
@@ -144,6 +145,28 @@ on its own branch, so it can edit freely without touching your checkout or other
   path and branch from the current `HEAD`. If you removed a changed one but its branch remains, the call throws naming
   the path. The `isolation` of a resume call is ignored with a warning: the agent keeps how it was started.
 - A `run_in_background: true` agent that keeps a worktree reports it in its end message.
+
+## Agent memory
+
+`memory: user | project | local` in an agent file gives the agent a persistent directory at Claude Code's paths, so agent
+files and their memories carry over from Claude Code. `<name>` is the agent's `name` field.
+
+| Scope | Directory |
+|---|---|
+| `user` | `~/.claude/agent-memory/<name>/` |
+| `project` | `<main checkout>/.claude/agent-memory/<name>/` (meant to be committed) |
+| `local` | `<main checkout>/.claude/agent-memory-local/<name>/` (added to the repository's `info/exclude` once) |
+
+- The main checkout is the repository root of the cwd of the session that calls `Agent`, never the agent's worktree, so
+  memory survives a removed worktree. Outside a repository `project` and `local` use that cwd, and no exclude file is written.
+- The directory is created when the agent starts. The system prompt gets a "Persistent memory" section: where the
+  directory is, how to keep `MEMORY.md` a short index, and the first 200 lines or 25000 bytes of `MEMORY.md` (whichever
+  comes first, with a note when cut). A resumed agent reads the current file.
+- Read, Write and Edit are enabled for the agent when its `tools` list lacks them. If `disallowedTools` names Write or Edit,
+  they stay denied: the memory is read-only, the prompt says so and the result carries a warning.
+- **Risk:** an agent with memory writes files outside its working directory (`~/.claude` for `user`, the main checkout
+  for `project` and `local`), and what it saves is fed back into its prompt on later runs. Use `disallowedTools` for a
+  read-only memory, and review `project` memory before committing it.
 
 ## Watching and talking to subagents
 
@@ -311,6 +334,7 @@ npm install
 npm test            # real suite (test/real) + fault suite (test/faults)
 npm run test:real   # only the real suite
 npm run test:faults # only the fault suite: scripted fake pi (test/fake-pi.mjs), no model, free
+npm run test:memory   # memory prompt, tools and directories on fake pi: no model, free
 npm run test:worktree # worktree module and isolation on fake pi, real git on temp repos: no model, free
 npm run test:panel  # panel rows, focus rules and screen rendering against the registry: no pi, no model, free
 npm run test:parent # a real parent pi (rpc) with the codemode wrapper: background scripts, real haiku

@@ -1,5 +1,8 @@
 // Turn a definition + call input + config into the child process spec (spec 5).
 
+import { mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.ts";
 import type { AgentDefinition, Effort } from "./definition.ts";
@@ -44,6 +47,8 @@ export interface ChildSpec {
 export interface ResolveOptions {
   agentId?: string;
   worktree?: WorktreeRef;
+  memoryRoot?: string; // project/local memory base: the main checkout (git root of the parent's cwd); default the parent's cwd
+  claudeDir?: string; // user memory base, default ~/.claude (tests pass a temp dir)
 }
 
 // Registers `codemode` in mode "only"; pi swaps its built-in codemode extension for it.
@@ -75,7 +80,66 @@ function mapTool(name: string, toolMap: Record<string, string>): string | undefi
   return undefined;
 }
 
-function resolveTools(def: AgentDefinition, config: Config, codemode: boolean): { args: string[]; warnings: string[] } {
+// Claude Code's three memory directories; created here. `name` becomes a path segment.
+export function memoryDir(def: AgentDefinition, parent: ParentContext, options: ResolveOptions): string {
+  if (/[\\/]/.test(def.name) || def.name === "." || def.name === "..") {
+    throw new Error(`agent name "${def.name}" cannot be used for memory: it must not contain a path separator`);
+  }
+  const root = options.memoryRoot ?? parent.cwd;
+  const dir = {
+    user: join(options.claudeDir ?? join(homedir(), ".claude"), "agent-memory", def.name),
+    project: join(root, ".claude", "agent-memory", def.name),
+    local: join(root, ".claude", "agent-memory-local", def.name),
+  }[def.memory!];
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+const MEMORY_MAX_LINES = 200;
+const MEMORY_MAX_BYTES = 25_000;
+
+// The head of MEMORY.md: the first 200 lines or 25000 bytes, whichever comes first (a cut character is dropped whole).
+function memoryHead(dir: string): { text: string; cut: boolean } | undefined {
+  let raw: Buffer;
+  try {
+    raw = readFileSync(join(dir, "MEMORY.md"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+  let text = raw.toString("utf8");
+  let cut = false;
+  const lines = text.split("\n");
+  if (lines.length > MEMORY_MAX_LINES + (text.endsWith("\n") ? 1 : 0)) {
+    text = lines.slice(0, MEMORY_MAX_LINES).join("\n");
+    cut = true;
+  }
+  if (Buffer.byteLength(text) > MEMORY_MAX_BYTES) {
+    text = Buffer.from(text).subarray(0, MEMORY_MAX_BYTES).toString("utf8").replace(/�+$/, "");
+    cut = true;
+  }
+  return { text, cut };
+}
+
+function memorySection(dir: string, readOnly: boolean): string {
+  const head = memoryHead(dir);
+  const note = `\n\n(MEMORY.md was truncated here: only its first ${MEMORY_MAX_LINES} lines or ${MEMORY_MAX_BYTES} bytes are shown. Read the file for the rest, and keep it shorter.)`;
+  const body = head === undefined ? "MEMORY.md does not exist yet." : head.text.trimEnd() + (head.cut ? note : "");
+  return [
+    "# Persistent memory",
+    `You have a persistent memory directory: ${dir}`,
+    readOnly
+      ? "Your tools do not allow writing, so this memory is read-only for you: read it, and do not try to change it."
+      : [
+          "It survives between your runs. Save what a later run would want to know (conventions, decisions, user preferences, where things are), not what the code already shows.",
+          "Keep `MEMORY.md` there as a short index: one line per memory, pointing to a topic file in the same directory when it needs more. Update an existing memory instead of adding a duplicate, and remove what turned out wrong.",
+        ].join("\n"),
+    "The start of MEMORY.md:",
+    body,
+  ].join("\n");
+}
+
+function resolveTools(def: AgentDefinition, config: Config, codemode: boolean): { args: string[]; warnings: string[]; memoryReadOnly: boolean } {
   const toolMap = { ...BUILTIN_TOOL_MAP, ...config.toolMap };
   const warnings: string[] = [];
 
@@ -93,8 +157,14 @@ function resolveTools(def: AgentDefinition, config: Config, codemode: boolean): 
   // `Bash(git push *)` in a deny list removes the whole tool: pi has no per-command rules.
   const deny = map((def.disallowedTools ?? []).map((t) => t.replace(/\(.*\)$/, "").trim()));
   const args: string[] = [];
+  // Memory needs Read, Write and Edit; a deny rule on Write or Edit keeps them off and makes the memory read-only.
+  const memoryTools = def.memory ? map(["Read", "Write", "Edit"]) : [];
+  const memoryReadOnly = !!def.memory && memoryTools.slice(1).some((t) => deny.includes(t));
+  if (memoryReadOnly) warnings.push(`memory "${def.memory}" is read-only: disallowedTools denies Write or Edit`);
   if (def.tools !== undefined) {
-    const allow = map(def.tools).filter((t) => !deny.includes(t));
+    const listed = map(def.tools);
+    const extra = (memoryReadOnly ? memoryTools.slice(0, 1) : memoryTools).filter((t) => !listed.includes(t));
+    const allow = [...listed, ...extra].filter((t) => !deny.includes(t));
     if (allow.length === 0) throw new Error(`agent "${def.name}" has no usable tools`);
     args.push("--tools", (codemode ? ["codemode", ...allow.filter((t) => t !== "codemode")] : allow).join(","));
     // A --tools list does not drop MCP tools unless an entry starts with mcp__; an agent must not get unlisted ones.
@@ -103,11 +173,11 @@ function resolveTools(def: AgentDefinition, config: Config, codemode: boolean): 
     args.push("--tools", "+codemode");
   }
   if (deny.length > 0) args.push("--exclude-tools", deny.join(","));
-  return { args, warnings };
+  return { args, warnings, memoryReadOnly };
 }
 
 // `parentCwd` is where skills are looked up; `cwd` is the child's working directory (a worktree when isolated).
-function buildSystemPrompt(def: AgentDefinition, parentCwd: string, cwd: string, now: Date, codemode: boolean): { text: string; warnings: string[] } {
+function buildSystemPrompt(def: AgentDefinition, parentCwd: string, cwd: string, now: Date, codemode: boolean, memory?: string): { text: string; warnings: string[] } {
   const parts = [def.prompt];
   const warnings: string[] = [];
   for (const name of def.skills ?? []) {
@@ -115,6 +185,7 @@ function buildSystemPrompt(def: AgentDefinition, parentCwd: string, cwd: string,
     if (text === undefined) warnings.push(`skill "${name}" not found`);
     else parts.push(`# Skill: ${name}\n\n${text.trim()}`);
   }
+  if (memory) parts.push(memory);
   parts.push(
     [
       "# Environment",
@@ -139,7 +210,8 @@ export function resolveChild(
   const codemode = config.childCodemode === "only" && def.codemode !== false;
   const tools = resolveTools(def, config, codemode);
   const cwd = options.worktree?.path ?? parent.cwd;
-  const system = buildSystemPrompt(def, parent.cwd, cwd, new Date(), codemode);
+  const memory = def.memory ? memorySection(memoryDir(def, parent, options), tools.memoryReadOnly) : undefined;
+  const system = buildSystemPrompt(def, parent.cwd, cwd, new Date(), codemode, memory);
 
   // A resume id was already checked by storedAgentType().
   const agentId = input.resume ?? options.agentId ?? newAgentId();
