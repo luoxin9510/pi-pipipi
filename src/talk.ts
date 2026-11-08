@@ -1,7 +1,7 @@
 // What the user types on a subagent screen: steer it while it runs, or continue it once it is finished.
 
 import { discoverAgents } from "./discovery.ts";
-import { exchange, recordSteer, talkConfig } from "./exchange.ts";
+import { exchange, getHost, recordSteer } from "./exchange.ts";
 import { registry } from "./registry.ts";
 import { type ParentContext, resolveChild } from "./resolve.ts";
 
@@ -22,7 +22,7 @@ export function talkTo(parent: ParentContext, id: string, text: string): { deliv
   const spec = resolveChild(
     def,
     { description: r.description, prompt: text, resume: id, model: r.model || undefined, effort: r.thinking || undefined },
-    talkConfig(),
+    getHost().config(),
     parent,
   );
   const done = exchange(parent, spec, { type: r.type, description: r.description, said: text }, undefined, () => {}).then(() => {});

@@ -34,6 +34,7 @@ export interface RunResult {
   turns: number;
   durationMs: number;
   error?: string;
+  aborted: boolean; // the child reported that its run was aborted (an rpc abort took effect)
 }
 
 export interface Progress {
@@ -71,6 +72,9 @@ interface AssistantMessage {
   errorMessage?: string;
 }
 
+// One record of the child's rpc event stream (docs/json.md), other than the responses to our commands.
+export type ChildEvent = { type: string; [k: string]: unknown };
+
 // Commands a live child accepts over its rpc stdin (docs/rpc-commands.md). The seam for the subagent registry:
 // it can steer, abort or switch the model of a running child.
 export interface ChildHandle {
@@ -85,6 +89,7 @@ export function runChild(
   signal: AbortSignal | undefined,
   onProgress: (p: Progress) => void,
   onStart?: (handle: ChildHandle) => void,
+  onEvent?: (event: ChildEvent) => void,
 ): Promise<RunResult> {
   if (signal?.aborted) return Promise.reject(new Error("aborted"));
 
@@ -102,17 +107,17 @@ export function runChild(
       // spawn throws synchronously for arguments it rejects, such as a NUL byte in the prompt
       rmSync(tmp, { recursive: true, force: true });
       const error = `could not start ${spec.command}: ${(err as Error).message}`;
-      return resolve({ status: "failed", output: "", usage: emptyUsage(), turns: 0, durationMs: Date.now() - started, error });
+      return resolve({ status: "failed", output: "", usage: emptyUsage(), turns: 0, durationMs: Date.now() - started, error, aborted: false });
     }
 
     // rpc: one JSON command per LF-terminated line. A child that already exited makes the write fail: ignore it,
     // the exit is handled by "close".
     child.stdin.on("error", () => {});
     const send = (command: Record<string, unknown>) => {
-      if (!child.stdin.writable) return;
       child.stdin.write(`${JSON.stringify(command)}\n`);
     };
     const PROMPT_ID = "pipipi-prompt";
+    let modelRequests = 0; // set_model request ids
     const requests = new Map<string, (error: string | undefined) => void>(); // commands waiting for pi's response
 
     const usage = emptyUsage();
@@ -132,6 +137,8 @@ export function runChild(
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined; // after settle or the last allowed turn
     let stoppedAfterSettle = false; // settled but did not exit; we stopped it
+    let aborting = false; // an rpc abort was sent
+    let finished = false; // the child process is gone: no more commands
     let promptError: string | undefined; // pi rejected our prompt command
 
     const stopChild = () => {
@@ -144,6 +151,8 @@ export function runChild(
     // Ask the child to stop its run (rpc abort); it settles with aborted: true and we close stdin. Signals only if
     // it does not settle in time.
     const abortChild = () => {
+      if (aborting) return; // asked once: a second ask must not move the grace period
+      aborting = true;
       send({ type: "abort" });
       if (graceTimer) clearTimeout(graceTimer);
       graceTimer = setTimeout(stopChild, SETTLE_GRACE_MS);
@@ -156,7 +165,7 @@ export function runChild(
     signal?.addEventListener("abort", onAbort, { once: true });
 
     const handleEvent = (line: string) => {
-      let event: { type: string; [k: string]: unknown };
+      let event: ChildEvent;
       try {
         event = JSON.parse(line);
       } catch {
@@ -178,6 +187,7 @@ export function runChild(
           }
           return;
         }
+        onEvent?.(event); // every event of the run, for the subagent screen's live view
         // After the last allowed turn only the end of the run matters, but its cost still counts.
         if (hitMaxTurns && event.type !== "agent_settled") {
           const m = event.message as AssistantMessage | undefined;
@@ -255,7 +265,6 @@ export function runChild(
       if (stderr.length > 64_000) stderr = stderr.slice(-32_000);
     });
 
-    let finished = false;
     const finish = (code: number | null, spawnError?: Error) => {
       if (finished) return; // a failed spawn emits both "error" and "close"
       finished = true;
@@ -267,7 +276,7 @@ export function runChild(
       requests.clear();
       if (parentAborted) return reject(new Error("aborted"));
 
-      const base = { output, usage, turns, durationMs: Date.now() - started };
+      const base = { output, usage, turns, durationMs: Date.now() - started, aborted: childAborted };
       if (hitMaxTurns && (cutShort || !settled || childAborted)) return resolve({ status: "partial", ...base });
       const stderrTail = stderr.trimEnd().split("\n").slice(-STDERR_LINES).join("\n");
       const error =
@@ -284,15 +293,15 @@ export function runChild(
     send({ id: PROMPT_ID, type: "prompt", message: spec.prompt });
     onStart?.({
       send: (command) => {
-        if (settled || !child.stdin.writable) return false;
+        if (settled || finished) return false;
         if (command.type === "abort") abortChild();
         else send(command);
         return true;
       },
       setModel: (provider, modelId) =>
         new Promise((resolve) => {
-          if (settled || !child.stdin.writable) return resolve("the subagent is not running");
-          const id = `pipipi-model-${requests.size}-${Date.now()}`;
+          if (settled || finished) return resolve("the subagent is not running");
+          const id = `pipipi-model-${modelRequests++}`;
           requests.set(id, resolve);
           send({ id, type: "set_model", provider, modelId });
         }),

@@ -10,7 +10,7 @@ return "chk:" + [r.status, r.error].join("|");
 After the script finishes, reply with the single word DONE.`;
 
 test("x on a running panel row stops the subagent; main's script gets the failed result", async () => {
-  await withPi({ env: { PIPIPI_PANEL_LINGER_MS: "20000" } }, async (pi) => {
+  await withPi({ lingerMs: 20000 }, async (pi) => {
     await pi.waitFor("claude-haiku");
     pi.submit(script("stop by x"));
     await pi.waitFor((s) => /running · general-purpose\(stop by x\) · [1-9]\d* turns · bash/.test(s), 90_000);
@@ -23,7 +23,7 @@ test("x on a running panel row stops the subagent; main's script gets the failed
 });
 
 test("/model and /stop on the subagent screen", async () => {
-  await withPi({ env: { PIPIPI_PANEL_LINGER_MS: "20000" } }, async (pi) => {
+  await withPi({ lingerMs: 20000 }, async (pi) => {
     await pi.waitFor("claude-haiku");
     pi.submit(script("screen stop"));
     await pi.waitFor((s) => /running · general-purpose\(screen stop\) · [1-9]\d* turns · bash/.test(s), 90_000);

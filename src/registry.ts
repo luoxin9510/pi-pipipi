@@ -4,11 +4,22 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { applyEvent, type LiveMessage } from "./live.ts";
 import type { ParentContext } from "./resolve.ts";
-import { addUsage, type ChildHandle, emptyUsage, type Progress, type RunResult, type Status, type Usage } from "./runner.ts";
+import { addUsage, type ChildEvent, type ChildHandle, emptyUsage, type Progress, type RunResult, type Status, type Usage } from "./runner.ts";
 import { subagentSessionDir } from "./sessions.ts";
 
 export type SubagentStatus = Status | "running" | "stopped";
+
+// How a status is drawn (panel and subagent screen). A new status is a type error until it has both.
+export const ICONS: Record<SubagentStatus, string> = { running: "●", completed: "✓", partial: "◐", failed: "✗", stopped: "■" };
+export const COLORS: Record<SubagentStatus, "accent" | "success" | "warning" | "error"> = {
+  running: "accent",
+  completed: "success",
+  partial: "warning",
+  failed: "error",
+  stopped: "warning",
+};
 
 export interface SubagentRecord {
   id: string; // the agentId
@@ -26,6 +37,9 @@ export interface SubagentRecord {
   sessionDir?: string; // where the child session and meta file live; unset for an in-memory parent
 }
 
+// "type(description)", or the type alone.
+export const label = (r: Pick<SubagentRecord, "type" | "description">): string => (r.description ? `${r.type}(${r.description})` : r.type);
+
 export interface SubagentStart {
   id: string;
   type: string;
@@ -42,12 +56,28 @@ class Registry {
   private handles = new Map<string, ChildHandle>();
   private prior = new Map<string, { turns: number; usage: Usage }>(); // totals before the exchange in progress
   private tails = new Map<string, Promise<void>>(); // per subagent: resolves when the last queued turn has ended
+  private queued = new Map<string, number>(); // per subagent: turns running or waiting
   private stopping = new Set<string>(); // stop requested for the exchange in progress
-  private listeners =new Set<() => void>();
+  private ranHere = new Set<string>(); // started an exchange in this process; only these linger in the panel
+  private listeners = new Set<() => void>();
+  private lives = new Map<string, LiveMessage>(); // the message each running child is writing
+  private watchers = new Map<string, Set<(event: ChildEvent) => void>>();
 
   // The parent session's subagents, newest first.
   list(parentSessionId: string): SubagentRecord[] {
     return [...this.records.values()].filter((r) => r.parentSessionId === parentSessionId).sort((a, b) => b.startedAt - a.startedAt);
+  }
+
+  // What the panel shows: running subagents, and those that ended in this process less than `lingerMs` ago. Oldest
+  // first, so rows do not jump. Records rebuilt from the meta files are never shown.
+  visible(parentSessionId: string, lingerMs: number): SubagentRecord[] {
+    const now = Date.now();
+    // list() is newest first and keeps insertion order among equal start times (calls in one tick)
+    return this.list(parentSessionId)
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => this.ranHere.has(r.id) && (r.endedAt === undefined || now - r.endedAt < lingerMs))
+      .sort((a, b) => a.r.startedAt - b.r.startedAt || a.i - b.i)
+      .map(({ r }) => r);
   }
 
   get(id: string): SubagentRecord | undefined {
@@ -66,29 +96,38 @@ class Registry {
     let release!: () => void;
     const tail = prev.then(() => new Promise<void>((resolve) => (release = resolve)));
     this.tails.set(id, tail);
+    this.queued.set(id, (this.queued.get(id) ?? 0) + 1);
     void tail.then(() => this.tails.get(id) === tail && this.tails.delete(id));
     try {
       await new Promise<void>((resolve, reject) => {
         if (signal?.aborted) return reject(new Error("aborted"));
-        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-        void prev.then(resolve);
+        const onAbort = () => reject(new Error("aborted"));
+        signal?.addEventListener("abort", onAbort, { once: true });
+        void prev.then(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve();
+        });
       });
       return await fn();
     } finally {
+      const left = this.queued.get(id)! - 1;
+      if (left === 0) this.queued.delete(id);
+      else this.queued.set(id, left);
       // `release` is set once prev has resolved; an abort while waiting must still free the place in line
       void prev.then(() => release());
     }
   }
 
-  // Stop a running subagent (rpc abort). False when it is not running.
+  // Ask a running subagent to stop (rpc abort). False when it is not running. Whether the exchange ended stopped is
+  // decided by how the run ends (exchange.ts): it may finish by itself before the abort lands.
   stop(id: string): boolean {
     if (!this.handles.get(id)?.send({ type: "abort" })) return false;
     this.stopping.add(id);
     return true;
   }
 
-  // True once, if the exchange that just ended was stopped by the user.
-  wasStopped(id: string): boolean {
+  // True once, if a stop was requested for the exchange that just ended.
+  stopRequested(id: string): boolean {
     return this.stopping.delete(id);
   }
 
@@ -108,7 +147,28 @@ class Registry {
 
   // True while a turn runs or waits for this subagent.
   busy(id: string): boolean {
-    return this.tails.has(id);
+    return this.queued.has(id);
+  }
+
+  // The running child's events (runner.ts), in order. Not a record change: no `subscribe` listener is called.
+  event(id: string, event: ChildEvent): void {
+    const live = applyEvent(this.lives.get(id), event);
+    if (live) this.lives.set(id, live);
+    else this.lives.delete(id);
+    for (const w of this.watchers.get(id) ?? []) w(event);
+  }
+
+  // The assistant message a running subagent is writing right now; undefined between messages and when not running.
+  streaming(id: string): LiveMessage | undefined {
+    return this.lives.get(id);
+  }
+
+  // Call `watcher` with each event of this subagent's running child. Returns the unsubscribe function.
+  watch(id: string, watcher: (event: ChildEvent) => void): () => void {
+    const set = this.watchers.get(id) ?? new Set();
+    set.add(watcher);
+    this.watchers.set(id, set);
+    return () => set.delete(watcher);
   }
 
   // Resolves when every turn queued so far has ended.
@@ -122,11 +182,13 @@ class Registry {
     return () => this.listeners.delete(listener);
   }
 
-  // Load the parent session's meta files. Ids already known (live, or loaded before) are kept as they are.
-  rebuild(parent: ParentContext): void {
-    if (!parent.sessionFile) return;
+  // Load the parent session's meta files. Ids already known (live, or loaded before) are kept as they are. A file that
+  // cannot be read is skipped; the returned warnings say which and why.
+  rebuild(parent: ParentContext): string[] {
+    const warnings: string[] = [];
+    if (!parent.sessionFile) return warnings;
     const dir = subagentSessionDir(parent);
-    if (!existsSync(dir)) return;
+    if (!existsSync(dir)) return warnings;
     for (const file of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
       const id = file.slice(0, -".json".length);
       if (this.records.has(id)) continue;
@@ -134,36 +196,40 @@ class Registry {
       let meta: MetaFile;
       try {
         meta = JSON.parse(readFileSync(path, "utf8"));
+        if (typeof meta?.agentType !== "string") throw new Error("no agentType");
       } catch (err) {
-        throw new Error(`bad subagent meta file ${path}: ${(err as Error).message}`);
+        warnings.push(`skipped subagent meta file ${path}: ${(err as Error).message}`);
+        continue;
       }
-      if (typeof meta.agentType !== "string") throw new Error(`bad subagent meta file ${path}: no agentType`);
       const mtime = statSync(path).mtimeMs;
+      // A v1 file has no status: its run finished. A "running" status with no live child is a run that died.
+      const ended = meta.status === undefined || meta.status === "running";
       this.records.set(id, {
         id,
         parentSessionId: parent.sessionId,
         type: meta.agentType,
         description: meta.description ?? "",
-        // A v1 file has no status: its run finished. A "running" status with no live child is a run that died.
         status: meta.status === undefined ? "completed" : meta.status === "running" ? "stopped" : meta.status,
         turns: meta.turns ?? 0,
         lastTool: meta.lastTool,
         usage: meta.usage ?? emptyUsage(),
         startedAt: meta.startedAt ?? mtime,
-        endedAt: meta.status === undefined ? mtime : meta.endedAt,
+        endedAt: ended ? mtime : meta.endedAt,
         model: meta.model ?? "",
         thinking: meta.thinking ?? "",
         sessionDir: dir,
       });
     }
     this.emit();
+    return warnings;
   }
 
   // An exchange starts: a new subagent, or a resumed one (known from the meta files or from earlier runs).
   begin(parent: ParentContext, start: SubagentStart): void {
-    this.rebuild(parent);
+    this.rebuild(parent); // its warnings were shown at session start
     const old = this.records.get(start.id);
     this.prior.set(start.id, { turns: old?.turns ?? 0, usage: old?.usage ?? emptyUsage() });
+    this.ranHere.add(start.id);
     const record: SubagentRecord = {
       ...old,
       ...start,
@@ -196,6 +262,8 @@ class Registry {
     if (run) addUsage(usage, run.usage);
     this.prior.delete(id);
     this.handles.delete(id);
+    this.lives.delete(id);
+    this.stopping.delete(id);
     const record = this.update(id, { status, endedAt: Date.now(), ...(run ? { turns: prior.turns + run.turns, usage } : {}) });
     this.writeMeta(record);
   }
@@ -205,7 +273,10 @@ class Registry {
     this.records.clear();
     this.handles.clear();
     this.prior.clear();
-    this.emit();
+    this.lives.clear();
+    this.ranHere.clear();
+    this.listeners.clear(); // a fresh process has no screens or panels yet
+    this.watchers.clear();
   }
 
   private update(id: string, patch: Partial<SubagentRecord>): SubagentRecord {

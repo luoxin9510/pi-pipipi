@@ -35,7 +35,7 @@ test("opening a running subagent shows its transcript growing while main runs; m
 });
 
 test("a finished subagent shows its full transcript, scrolls to the task, rejects other slash commands, /main leaves", async () => {
-  await withPi({ rows: 24, env: { PIPIPI_PANEL_LINGER_MS: "1000" } }, async (pi) => {
+  await withPi({ rows: 24, lingerMs: 1000 }, async (pi) => {
     await pi.waitFor("claude-haiku");
     pi.submit(SCRIPT.replace("sleep 12", "sleep 1"));
     await pi.waitFor(/RESULT: completed/, 120_000);

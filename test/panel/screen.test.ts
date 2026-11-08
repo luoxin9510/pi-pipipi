@@ -36,11 +36,13 @@ function setup(sessionId: string, agentId: string) {
   let left = 0;
   const idle = { value: false };
   const screen = new SubagentScreen(tui, theme, agentId, () => idle.value, { cwd: "/tmp" } as any, () => left++);
-  return { screen, file, left: () => left, idle };
+  // The running child reports what it appended (a turn's end, say); the screen then reads the file again.
+  const grew = () => registry.event(agentId, { type: "turn_end" });
+  return { screen, file, left: () => left, idle, grew, agentId };
 }
 
 test("header, the user task, a codemode call with its script and result, and live growth from the file", () => {
-  const { screen, file, idle } = setup("s1", "agent1");
+  const { screen, file, idle, grew } = setup("s1", "agent1");
   let text = screen.render(100).join("\n");
   assert.match(text, /main › Explore\(look\)/);
   assert.match(text, /main: running/);
@@ -48,6 +50,7 @@ test("header, the user task, a codemode call with its script and result, and liv
   assert.doesNotMatch(text, /tools\.bash/);
 
   appendFileSync(file, assistant("a1", "u1", [{ type: "toolCall", id: "c1", name: "codemode", arguments: { code: "const a = await tools.bash({command: 'ls'});\nreturn a;" } }]));
+  grew();
   text = screen.render(100).join("\n");
   assert.match(text, /codemode/);
   assert.match(text, /const a = await tools\.bash/);
@@ -58,6 +61,7 @@ test("header, the user task, a codemode call with its script and result, and liv
 
   appendFileSync(file, line({ type: "message", id: "r1", parentId: "a1", timestamp: "2026-01-01T00:00:01Z", message: { role: "toolResult", toolCallId: "c1", toolName: "codemode", content: [{ type: "text", text: "Script completed OUT-123" }], isError: false, timestamp: 2 } }));
   appendFileSync(file, assistant("a2", "r1", [{ type: "text", text: "ALL-DONE-REPLY" }]));
+  grew();
   text = screen.render(100).join("\n");
   assert.match(text, /OUT-123/);
   assert.match(text, /ALL-DONE-REPLY/);
@@ -67,12 +71,13 @@ test("header, the user task, a codemode call with its script and result, and liv
 });
 
 test("the screen is exactly the terminal height; scrolling reaches earlier lines and End follows again", () => {
-  const { screen, file } = setup("s2", "agent2");
+  const { screen, file, grew } = setup("s2", "agent2");
   let parent = "u1";
   for (let i = 0; i < 12; i++) {
     appendFileSync(file, assistant(`m${i}`, parent, [{ type: "text", text: `REPLY-${i}` }]));
     parent = `m${i}`;
   }
+  grew();
   let lines = screen.render(100);
   assert.equal(lines.length, ROWS);
   assert.ok(lines.join("\n").includes("REPLY-11"));
@@ -102,4 +107,46 @@ test("/main and Esc leave; other slash commands only show a notice", () => {
   screen.handleInput("\x1b");
   assert.equal(left(), 2);
   screen.dispose();
+});
+
+const update = (u: object) => ({ type: "message_update", assistantMessageEvent: u });
+const count = (text: string, needle: string) => text.split(needle).length - 1;
+
+test("a running child's message streams onto the screen token by token, before the message ends; the file then takes over", () => {
+  const { screen, file, agentId } = setup("s4", "agent4");
+  const event = (e: object) => registry.event(agentId, e as any);
+  event({ type: "message_start", message: { role: "assistant" } });
+  event(update({ type: "text_start", contentIndex: 0 }));
+  event(update({ type: "text_delta", contentIndex: 0, delta: "STREAM-ONE " }));
+  assert.match(screen.render(100).join("\n"), /STREAM-ONE/);
+  event(update({ type: "text_delta", contentIndex: 0, delta: "STREAM-TWO" }));
+  const midway = screen.render(100).join("\n");
+  assert.match(midway, /STREAM-ONE STREAM-TWO/);
+  assert.match(midway, /FIRST-TASK-TEXT/, "the history stays above it");
+
+  // a tool call shows once its arguments are complete
+  event(update({ type: "toolcall_end", contentIndex: 1, toolCall: { id: "c9", name: "codemode", arguments: { code: "return 'LIVE-SCRIPT';" } } }));
+  assert.match(screen.render(100).join("\n"), /LIVE-SCRIPT/);
+
+  // the message ends: it is in the file now, and drawn once
+  appendFileSync(file, assistant("a1", "u1", [{ type: "text", text: "STREAM-ONE STREAM-TWO" }]));
+  event({ type: "message_end", message: { role: "assistant" } });
+  const after = screen.render(100).join("\n");
+  assert.equal(count(after, "STREAM-ONE"), 1, after);
+  assert.doesNotMatch(after, /LIVE-SCRIPT/);
+  screen.dispose();
+});
+
+test("a screen opened in the middle of a message shows what was written so far; a disposed screen stops watching", () => {
+  const first = setup("s5", "agent5");
+  first.screen.dispose();
+  const event = (e: object) => registry.event("agent5", e as any);
+  event({ type: "message_start", message: { role: "assistant" } });
+  event(update({ type: "thinking_delta", contentIndex: 0, delta: "pondering" }));
+  event(update({ type: "text_delta", contentIndex: 1, delta: "HALF-WRITTEN" }));
+  const late = new SubagentScreen(tui, theme, "agent5", () => true, { cwd: "/tmp" } as any, () => {});
+  assert.match(late.render(100).join("\n"), /HALF-WRITTEN/);
+  late.dispose();
+  assert.equal((registry as any).watchers.get("agent5").size, 0, "no watcher left behind");
+  event({ type: "message_end", message: { role: "assistant" } });
 });

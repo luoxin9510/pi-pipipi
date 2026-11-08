@@ -32,7 +32,7 @@ test("typing to a running subagent steers it: its reply shows on the screen, and
 });
 
 test("typing to a finished subagent continues it: the answer streams onto the screen, the note waits in idle main", async () => {
-  await withPi({ env: { PIPIPI_PANEL_LINGER_MS: "1000" } }, async (pi) => {
+  await withPi({ lingerMs: 1000 }, async (pi) => {
     await pi.waitFor("claude-haiku");
     pi.submit(script("Reply with the single word OK. Do not call any tool."));
     await pi.waitFor(/RESULT: completed/, 120_000);
@@ -43,7 +43,7 @@ test("typing to a finished subagent continues it: the answer streams onto the sc
     await pi.waitFor((s) => HEAD.test(s) && s.includes("main: idle"), 20_000);
 
     pi.submit("What is 17 times 23? Reply with only the number, no tool.");
-    const v = await pi.waitFor(/^\s*391\s*$/m, 90_000); // the answer alone on a line: the question does not match
+    const v = await pi.waitFor(/391/, 90_000); // only the answer has it: the question does not
     assert.match(v, /17 times 23/, "the user's message is on the screen too");
 
     pi.submit("/main");

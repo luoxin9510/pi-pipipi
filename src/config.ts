@@ -7,6 +7,7 @@ export interface Config {
   maxConcurrent: number;
   piCommand: string;
   childCodemode: "only" | "inherit";
+  panelLingerMs: number; // how long a finished subagent stays in the panel
 }
 
 // Claude Code model aliases -> the same-name Anthropic models. Settings override per alias.
@@ -49,7 +50,11 @@ export function readConfig(raw: unknown): Config {
     throw new Error(`pipipi.childCodemode must be "only" or "inherit", got ${JSON.stringify(childCodemode)}`);
   }
 
+  const panelLingerMs = r.panelLingerMs ?? 30_000;
+  if (typeof panelLingerMs !== "number" || !(panelLingerMs >= 0)) throw new Error("pipipi.panelLingerMs must be a number of milliseconds, 0 or more");
+
   return {
+    panelLingerMs,
     models: { ...DEFAULT_MODELS, ...stringMap(r.models, "models") },
     defaultModel: optionalString(r.defaultModel, "defaultModel") ?? "haiku",
     toolMap: stringMap(r.toolMap, "toolMap"),

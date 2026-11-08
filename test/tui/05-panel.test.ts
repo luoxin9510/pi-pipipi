@@ -15,7 +15,7 @@ const [x, y] = await Promise.all([
 return [x.status, y.status];`;
 
 test("the panel lists both running subagents, updates them, takes focus, and drops finished rows after the linger", async () => {
-  await withPi({ env: { PIPIPI_PANEL_LINGER_MS: "4000" } }, async (pi) => {
+  await withPi({ lingerMs: 4000 }, async (pi) => {
     await pi.waitFor("claude-haiku");
     pi.submit(SCRIPT);
 
@@ -35,15 +35,12 @@ test("the panel lists both running subagents, updates them, takes focus, and dro
     pi.press("up", "up"); // second -> first -> above the first: back to the editor
     await pi.waitGone("esc back to editor");
 
-    // while focused the keys do not reach the editor; after Esc they do
+    // a key the panel does not use goes to the editor and gives the focus back
     pi.press("down");
     await pi.waitFor("esc back to editor");
     pi.type("q");
-    pi.press("esc");
     await pi.waitGone("esc back to editor");
-    assert.doesNotMatch(pi.viewport(), /^q\s*$/m, "the key typed while the panel had focus was swallowed");
-    pi.type("z");
-    await pi.waitFor((s) => /^z\s*$/m.test(s));
+    await pi.waitFor((s) => /^q\s*$/m.test(s));
     pi.type("\x7f"); // erase it again
 
     // the short job finishes first: marked completed, then dropped after the linger while the other still runs

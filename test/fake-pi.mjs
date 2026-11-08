@@ -46,6 +46,10 @@ rl.on("line", async (line) => {
     if (scenario.abortSettles) out({ type: "agent_settled", aborted: true });
     return;
   }
+  if (cmd.type === "set_model") {
+    out({ id: cmd.id, type: "response", command: "set_model", success: true, data: {} });
+    return;
+  }
   if (cmd.type !== "prompt" || played) return;
   played = true;
   if (scenario.promptError) {

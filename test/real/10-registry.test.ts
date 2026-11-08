@@ -102,6 +102,20 @@ test("a meta file left 'running' by a dead process loads as stopped", async () =
   s.write(join(t.sessionDir!, "dead00000000.json"), JSON.stringify({ agentType: "Plan", description: "d", status: "running", startedAt: 1 }));
   await loadTool({}, { cwd: s.repo, persist, sessionId: t.sessionId });
   assert.equal(registry.get("dead00000000")!.status, "stopped");
+  assert.ok(registry.get("dead00000000")!.endedAt !== undefined, "a dead run has an end time, so it never counts as running");
+});
+
+test("a corrupt meta file does not break session start: it is skipped with a warning, the other subagents load", async () => {
+  const s = sandbox();
+  const persist = join(s.root, "sessions");
+  const t = await loadTool({}, { cwd: s.repo, persist });
+  registry.clear();
+  s.write(join(t.sessionDir!, "broken000000.json"), "{oops");
+  s.write(join(t.sessionDir!, "fine00000000.json"), JSON.stringify({ agentType: "Plan", status: "completed" }));
+  const t2 = await loadTool({}, { cwd: s.repo, persist, sessionId: t.sessionId });
+  assert.ok(t2.notes.some((n) => n.includes("broken000000.json") && n.startsWith("pi-pipipi:")), t2.notes.join("\n"));
+  assert.equal(registry.get("fine00000000")!.type, "Plan");
+  assert.equal(registry.get("broken000000"), undefined);
 });
 
 test("in-memory parent: /subagents shows the notice and no picker; no subagents yet: says so", async () => {

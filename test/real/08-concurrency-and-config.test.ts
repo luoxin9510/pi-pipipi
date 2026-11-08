@@ -63,6 +63,8 @@ test("wrong config types throw naming the key", async () => {
     [{ piCommand: 3 }, /pipipi\.piCommand must be a non-empty string/],
     [{ childCodemode: "yes" }, /pipipi\.childCodemode must be "only" or "inherit"/],
     [{ childCodemode: true }, /pipipi\.childCodemode must be "only" or "inherit"/],
+    [{ panelLingerMs: "soon" }, /pipipi\.panelLingerMs must be a number/],
+    [{ panelLingerMs: -1 }, /pipipi\.panelLingerMs must be a number/],
   ];
   for (const [settings, error] of cases) await assert.rejects(loadTool(settings, { cwd: s.repo }), error);
 });

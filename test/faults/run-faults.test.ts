@@ -4,7 +4,13 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentFile, ev, happyLines, loadTool, sandbox, usage } from "../helpers.ts";
+import { registry } from "../../src/registry.ts";
+import { type ChildHandle, runChild } from "../../src/runner.ts";
+import { agentFile, ev, FAKE_PI, happyLines, loadTool, sandbox, usage } from "../helpers.ts";
+
+const fakeSpec = (cwd: string) => ({
+  command: FAKE_PI, args: [], env: process.env as Record<string, string>, cwd, systemPrompt: "x", prompt: "go", model: "m", thinking: "off", agentId: "fake", warnings: [],
+});
 
 test("10: completed run: output is the last assistant text, usage summed, turns counted", async () => {
   const s = sandbox();
@@ -240,3 +246,53 @@ test("malformed records fail the run with the bad line named instead of throwing
   }
 });
 
+
+test("set_model requests get unique ids, even in the same millisecond, and each is answered", async () => {
+  const s = sandbox();
+  s.scenario({ lines: [], hang: true });
+  const ctl = new AbortController();
+  const handle = await new Promise<ChildHandle>((resolve) => {
+    runChild(fakeSpec(s.repo), ctl.signal, () => {}, resolve).catch(() => {});
+  });
+  const answers = await Promise.all([1, 2, 3, 4].map((n) => handle.setModel("anthropic", `m${n}`)));
+  assert.deepEqual(answers, [undefined, undefined, undefined, undefined]);
+  const ids = s.record().commands.filter((c) => c.type === "set_model").map((c: any) => c.id);
+  assert.equal(ids.length, 4);
+  assert.equal(new Set(ids).size, 4, `ids: ${ids}`);
+  ctl.abort();
+});
+
+const until = async (ready: () => boolean) => {
+  for (let i = 0; i < 300 && !ready(); i++) await new Promise((r) => setTimeout(r, 10));
+};
+const first = () => registry.list("parent-id")[0]!;
+
+test("a run that finishes before the abort lands is not 'stopped'; its real result stands", async () => {
+  const s = sandbox();
+  s.scenario({ lines: [ev.session(), ev.assistant("fine"), ev.turnEnd(), ev.settled()], delayMs: 150 }); // ignores abort
+  const t = await loadTool({}, { cwd: s.repo });
+  const run = t.run({});
+  await until(() => registry.list("parent-id").length > 0 && registry.handle(first().id) !== undefined);
+  const id = first().id;
+  assert.equal(registry.stop(id), true, "the abort was sent");
+  const r = (await run).structuredContent;
+  assert.equal(r.status, "completed");
+  assert.equal(r.output, "fine");
+  assert.equal(registry.get(id)!.status, "completed");
+});
+
+test("a stop that lands: failed 'stopped by user'; the handle takes no more commands once settled", async () => {
+  const s = sandbox();
+  s.scenario({ lines: [ev.session(), ev.assistant("t1", usage(10, 5, 0.01), { stopReason: "toolUse" }), ev.tool("read")], hang: true, abortSettles: true });
+  const t = await loadTool({}, { cwd: s.repo });
+  const run = t.run({});
+  await until(() => registry.list("parent-id").length > 0 && first().lastTool !== undefined && registry.handle(first().id) !== undefined);
+  const id = first().id;
+  const handle = registry.handle(id)!;
+  assert.equal(registry.stop(id), true);
+  const r = (await run).structuredContent;
+  assert.equal(r.status, "failed");
+  assert.equal(r.error, "stopped by user");
+  assert.equal(registry.get(id)!.status, "stopped");
+  assert.equal(handle.send({ type: "steer", message: "late" }), false, "settled: no more commands");
+});

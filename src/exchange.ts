@@ -1,6 +1,7 @@
 // One exchange with a subagent: wait for its turn in the registry queue, take a concurrency slot, run the child, record
 // it in the registry, and tell main about what the user said to it. Main's `Agent` calls and the user typing on a
-// subagent screen both come through here, so a subagent never has two processes.
+// subagent screen both come through here, so a subagent never has two processes. Also kept here, because only an
+// exchange uses them: the process-wide concurrency limit, the user's steers and the note to main.
 
 import type { Config } from "./config.ts";
 import type { ParentContext, ChildSpec } from "./resolve.ts";
@@ -48,20 +49,24 @@ export function limitConcurrency(max: number): void {
   slots.limit ??= max;
 }
 
-// What the extension entry gives us: the live config, and how to hand main a note (src/index.ts).
-let bound: { config: () => Config; note: (content: string) => void } | undefined;
+// What the extension entry (src/index.ts) lends the exchanges: the live config, and how to hand main a note.
+interface Host {
+  config: () => Config;
+  note: (content: string) => void;
+}
+let host: Host | undefined;
 
-export function bindTalk(b: { config: () => Config; note: (content: string) => void }): void {
-  bound = b;
+export function bindHost(h: Host): void {
+  host = h;
 }
 
-export const talkConfig = (): Config => bound!.config();
+export const getHost = (): Host => host!;
 
 // The user's steer texts for the exchange now running, per subagent; the note goes out when that exchange settles.
-const steers = new Map<string, string[]>();
+const userSteers = new Map<string, string[]>();
 
 export function recordSteer(id: string, text: string): void {
-  steers.set(id, [...(steers.get(id) ?? []), text]);
+  userSteers.set(id, [...(userSteers.get(id) ?? []), text]);
 }
 
 export const REPLY_LIMIT = 2000;
@@ -100,20 +105,22 @@ export async function exchange(
             onProgress(p);
           },
           (handle) => registry.attach(id, handle),
+          (event) => registry.event(id, event),
         );
       } catch (err) {
-        registry.wasStopped(id);
-        registry.finish(id, "stopped"); // the caller aborted
-        steers.delete(id);
+        // runChild rejects only when its caller aborted
+        registry.finish(id, "stopped");
+        userSteers.delete(id);
         throw err;
       }
-      if (registry.wasStopped(id)) {
+      // A stop request that lands after the run finished by itself leaves the run as it was.
+      if (registry.stopRequested(id) && run.aborted) {
         run = { ...run, status: "failed", error: "stopped by user" };
         registry.finish(id, "stopped", run);
       } else registry.finish(id, run.status, run);
-      const said = [...(info.said === undefined ? [] : [info.said]), ...(steers.get(id) ?? [])];
-      steers.delete(id);
-      if (said.length > 0) bound!.note(noteText(info.type, id, said, run));
+      const said = [...(info.said === undefined ? [] : [info.said]), ...(userSteers.get(id) ?? [])];
+      userSteers.delete(id);
+      if (said.length > 0) host!.note(noteText(info.type, id, said, run));
       return run;
     } finally {
       slots.release();

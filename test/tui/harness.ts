@@ -24,7 +24,8 @@ export const KEYS = { up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b
 export interface PiOptions {
   cols?: number;
   rows?: number;
-  env?: Record<string, string>; // added to the environment (e.g. PIPIPI_PANEL_LINGER_MS)
+  lingerMs?: number; // the pipipi.panelLingerMs setting: how long finished rows stay in the panel (default 30 s)
+  env?: Record<string, string>; // added to the environment
   args?: string[]; // extra pi arguments
 }
 
@@ -49,7 +50,7 @@ export class PiTerminal {
     symlinkSync(USER_AUTH, join(agentDir, "auth.json"));
     writeFileSync(
       join(agentDir, "settings.json"),
-      JSON.stringify({ defaultProvider: "anthropic", defaultModel: "claude-haiku-5-5", packages: [], quietStartup: true, theme: "dark", codemode: { mode: "on" } }),
+      JSON.stringify({ defaultProvider: "anthropic", defaultModel: "claude-haiku-5-5", packages: [], quietStartup: true, theme: "dark", codemode: { mode: "on" }, pipipi: o.lingerMs === undefined ? {} : { panelLingerMs: o.lingerMs } }),
     );
     this.term = new xterm.Terminal({ cols, rows, scrollback: 2000, allowProposedApi: true });
     const env: Record<string, string> = {

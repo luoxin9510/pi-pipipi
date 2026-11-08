@@ -97,7 +97,7 @@ async function executeAgent(
   for (const field of def.inert) spec.warnings.push(inertNotice(field));
 
   let last = "";
-  const run = await exchange(parent, spec, { type: agentType, description: input.description }, signal, (p) => {
+  const { aborted: _aborted, ...run } = await exchange(parent, spec, { type: agentType, description: input.description }, signal, (p) => {
     const text = `${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`;
     if (text !== last) onUpdate?.(text); // a turn's end repeats the update from its last tool start
     last = text;
