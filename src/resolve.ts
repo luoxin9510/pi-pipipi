@@ -99,13 +99,13 @@ const MEMORY_MAX_LINES = 200;
 const MEMORY_MAX_BYTES = 25_000;
 
 // The head of MEMORY.md: the first 200 lines or 25000 bytes, whichever comes first (a cut character is dropped whole).
-function memoryHead(dir: string): { text: string; cut: boolean } | undefined {
+function memoryHead(dir: string, warnings: string[]): { text: string; cut: boolean } | undefined {
   let raw: Buffer;
   try {
     raw = readFileSync(join(dir, "MEMORY.md"));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw err;
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") warnings.push(`could not read ${join(dir, "MEMORY.md")} (${(err as Error).message}); treated as empty`);
+    return undefined;
   }
   let text = raw.toString("utf8");
   let cut = false;
@@ -121,8 +121,8 @@ function memoryHead(dir: string): { text: string; cut: boolean } | undefined {
   return { text, cut };
 }
 
-function memorySection(dir: string, readOnly: boolean): string {
-  const head = memoryHead(dir);
+function memorySection(dir: string, readOnly: boolean, warnings: string[]): string {
+  const head = memoryHead(dir, warnings);
   const note = `\n\n(MEMORY.md was truncated here: only its first ${MEMORY_MAX_LINES} lines or ${MEMORY_MAX_BYTES} bytes are shown. Read the file for the rest, and keep it shorter.)`;
   const body = head === undefined ? "MEMORY.md does not exist yet." : head.text.trimEnd() + (head.cut ? note : "");
   return [
@@ -160,7 +160,14 @@ function resolveTools(def: AgentDefinition, config: Config, codemode: boolean): 
   // Memory needs Read, Write and Edit; a deny rule on Write or Edit keeps them off and makes the memory read-only.
   const memoryTools = def.memory ? map(["Read", "Write", "Edit"]) : [];
   const memoryReadOnly = !!def.memory && memoryTools.slice(1).some((t) => deny.includes(t));
-  if (memoryReadOnly) warnings.push(`memory "${def.memory}" is read-only: disallowedTools denies Write or Edit`);
+  if (memoryReadOnly) {
+    const widened = (def.disallowedTools ?? []).filter((t) => t.includes("(") && memoryTools.slice(1).includes(map([t.replace(/\(.*\)$/, "").trim()])[0]));
+    warnings.push(
+      `memory "${def.memory}" is read-only: disallowedTools denies Write or Edit, so both are removed` +
+        (widened.length > 0 ? ` (${widened.map((t) => `"${t}"`).join(", ")} denies the whole tool: pi has no per-path rules)` : ""),
+    );
+    for (const t of memoryTools.slice(1)) if (!deny.includes(t)) deny.push(t); // Write and Edit go together
+  }
   if (def.tools !== undefined) {
     const listed = map(def.tools);
     const extra = (memoryReadOnly ? memoryTools.slice(0, 1) : memoryTools).filter((t) => !listed.includes(t));
@@ -209,8 +216,8 @@ export function resolveChild(
   const thinking = input.effort ?? def.effort ?? parent.thinking;
   const codemode = config.childCodemode === "only" && def.codemode !== false;
   const tools = resolveTools(def, config, codemode);
-  const cwd = options.worktree?.path ?? parent.cwd;
-  const memory = def.memory ? memorySection(memoryDir(def, parent, options), tools.memoryReadOnly) : undefined;
+  const cwd = options.worktree ? join(options.worktree.path, options.worktree.subdir ?? "") : parent.cwd;
+  const memory = def.memory ? memorySection(memoryDir(def, parent, options), tools.memoryReadOnly, tools.warnings) : undefined;
   const system = buildSystemPrompt(def, parent.cwd, cwd, new Date(), codemode, memory);
 
   // A resume id was already checked by storedAgent().

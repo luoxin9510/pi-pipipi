@@ -137,6 +137,7 @@ class Registry {
   // Stop these subagents (those not running are skipped) and resolve when every one has ended. Each ends failed /
   // "stopped by user" as with `stop`.
   async stopAll(ids: string[]): Promise<void> {
+    this.abortQueued(ids);
     const stopped = ids.filter((id) => this.stop(id));
     if (stopped.length === 0) return;
     await new Promise<void>((resolve) => {
@@ -148,6 +149,31 @@ class Registry {
       const unsubscribe = this.subscribe(check);
       check();
     });
+  }
+
+  // Detached (run_in_background) agents run on their own signal; this keeps it so a stop reaches one that is still
+  // waiting for its turn or a slot (it has no child to abort yet).
+  private detached = new Map<string, { controller: AbortController; sessionId: string }>();
+
+  detach(id: string, sessionId: string, controller: AbortController): void {
+    this.detached.set(id, { controller, sessionId });
+  }
+
+  forget(id: string): void {
+    this.detached.delete(id);
+  }
+
+  // Abort these detached agents if they have not started a child; a running one is stopped through its child instead.
+  abortQueued(ids: string[]): void {
+    for (const id of ids) {
+      const d = this.detached.get(id);
+      if (d && !this.handles.has(id) && this.records.get(id)?.status !== "running") d.controller.abort();
+    }
+  }
+
+  // Every detached agent of the session still waiting (session end, stop all).
+  abortQueuedOf(sessionId: string): void {
+    this.abortQueued([...this.detached].filter(([, d]) => d.sessionId === sessionId).map(([id]) => id));
   }
 
   // True once, if a stop was requested for the exchange that just ended.

@@ -104,16 +104,18 @@ with `execFile`, never through a shell, and serialised per repository (git's own
 
 | Command | For |
 |---|---|
-| `git rev-parse --show-toplevel` | the main checkout; failing means "not a git repository" (the call throws) |
+| `git rev-parse --show-toplevel` | the checkout of the parent's cwd; failing means "not a git repository" (the call throws) |
 | `git rev-parse --verify HEAD^{commit}` | the base commit; failing means no commits (the call throws) |
+| `git rev-parse --path-format=absolute --git-common-dir` | agent memory's root: the parent of a `.git` common dir, i.e. the main checkout even from a linked worktree (else `--show-toplevel`) |
+| `git cat-file -e <base>:<subdir>` | the parent's cwd subdirectory exists in the starting commit, so the child starts in it inside the worktree (else the root, with a warning) |
 | `git rev-parse --git-path info/exclude` | where `/.pi/worktrees/` is appended once (relative to the root; inside a linked worktree it is the shared main `.git/info/exclude`) |
 | `git status --porcelain` (main checkout) | dirty main checkout: a warning on the result |
 | `git worktree prune`, `git branch --list pipipi/<id>` | before a (re)create; an existing branch with a missing worktree is an error |
 | `git worktree add -q -b pipipi/<id> <root>/.pi/worktrees/<id> <base>` | create |
 | `git ls-files --others --ignored --exclude-from=.worktreeinclude -z`, `git check-ignore -z --stdin` | `.worktreeinclude`: pattern match, then keep only gitignored files |
-| `git status --porcelain -z --untracked-files=all`, `git rev-parse HEAD`, `git diff --name-only -z <base> HEAD`, `git log --format=%h\ %s <base>..HEAD` | changed or not, and what changed, after the child has exited |
+| `git status --porcelain -z --untracked-files=all --ignored`, `git symbolic-ref -q HEAD`, `git stash list --format=%gs`, `git rev-parse HEAD`, `git diff --name-only -z <base> HEAD`, `git log --format=%h\ %s <base>..HEAD` | changed or not, and what changed, after the child has exited. Changed also when gitignored files were made (not `.pi/`, not unmodified `.worktreeinclude` copies), HEAD is not `refs/heads/pipipi/<id>`, or a stash entry was made on that branch (the outcome then has a `note`) |
 | `git worktree remove --force <path>`, `git branch -D pipipi/<id>` | remove an unchanged worktree; also `/subagents worktrees` removal of a picked one |
-| `git worktree list --porcelain`, `git merge-base <worktree HEAD> <main HEAD>` | `/subagents worktrees`: the `pipipi/*` entries after the first (the main checkout), and the fork point used as the base for the change summary |
+| `git worktree list --porcelain`, `git merge-base <worktree HEAD> <main HEAD>` | `/subagents worktrees`: the entries after the first (the main checkout) whose path is under `<root>/.pi/worktrees/` (any branch or detached), and the fork point used as the base for the change summary |
 
 Verified on git 2.54: `worktree add` works from a repository that is itself a linked worktree; with no commits `HEAD` does
 not resolve (`fatal: invalid reference: HEAD`); the exclude path from `--git-path` is the shared one in a linked worktree.
@@ -152,7 +154,7 @@ instructions (read-only wording when Write or Edit is denied) and the head of `M
 | `pi.on("agent_start" / "agent_end", (event, ctx))` | `src/index.ts` | pi-pipipi keeps the latest `ctx` from these and `session_start`; without them the note to main and main's state on the screen use the context of session start, which a reload replaces |
 | `pi.getSettings()` keeping the unknown `pipipi` key | `src/config.ts` | defaults only (replace with your own config source) |
 | `pi.registerCommand(name, { handler(args, ctx: ExtensionCommandContext) })` | `/subagents` | no `/subagents` |
-| `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })`; also `{ triggerTurn: true }` for a background script's result | the note to main, the background script message | main is not told about your exchanges |
+| `pi.sendMessage({ customType, content, display }, { deliverAs: "steer" })`; `{ triggerTurn: true, deliverAs: "steer" }` for a background script's or detached agent's result | the note to main, the background script message | main is not told about your exchanges |
 | `ctx.cwd`, `ctx.model {provider,id}` (may be undefined: `inherit` then throws), `ctx.thinkingLevel`, `ctx.isProjectTrusted()`, `ctx.isIdle()` | `src/agent-tool.ts`, `src/index.ts` | `inherit`, thinking and trust mirroring, the note's delivery |
 | `ctx.hasUI`, `ctx.ui.notify` | `src/index.ts` | gates the panel, discovery warnings and background scripts; false = tool only, no UI, scripts stay in the foreground (print mode exits at turn end) |
 | `ctx.sessionManager.getSessionFile()` / `getSessionId()` | sessions, registry | children run `--no-session`, no resume. The session dir must be writable: pi-pipipi writes `subagents/` there and rebuilds its list from it on every `session_start` (startup, reload, resume, new) |
@@ -178,8 +180,7 @@ under other names, replace the import paths (`grep -rn "@earendil-works" src`), 
   `AbortController`, and returns early with its own result when the script starts an `Agent`; the script goes on using
   the original `ctx` (`ctx.executeTool`) after the call and main's turn have ended. It relies on: nested tool call ids
   `<codemode call id>/<n>` (the owner of an `Agent` call is found by that prefix), `ctx.executeTool` working after the
-  tool call returned, and `pi.sendMessage(msg, { triggerTurn: true })` starting a run when main is idle (`{ deliverAs: "steer" }`
-  when it runs). `run_in_background: true` agents run detached from the call's signal and report with the same `sendMessage` delivery. Without them, no background scripts: set `pipipi.backgroundScripts: false` and pi's own codemode runs unwrapped (v2 behaviour).
+  tool call returned, and `pi.sendMessage(msg, { triggerTurn: true })` starting a run when main is not running. pi-pipipi always sends results as `{ triggerTurn: true, deliverAs: "steer" }`: pi routes it itself (streaming: steer; idle or compacting: a run starts, deferred while the previous run settles), so a result is never only appended while main sleeps. A throwing delivery is logged with `console.error`, never rethrown. `run_in_background: true` agents run detached from the call's signal and report with the same `sendMessage` delivery. Without them, no background scripts: set `pipipi.backgroundScripts: false` and pi's own codemode runs unwrapped (v2 behaviour).
   Also needed: `createCodemodeExtension` exported from the package index (the wrapper cannot be built without it) and
   `ctx.ui.onTerminalInput` for ctrl+b (see layer 5; without a TUI, scripts move to the background only by starting an `Agent`).
   Esc aborts main's signal: the wrapper links it to the script only while the script is in the foreground, so background

@@ -9,8 +9,9 @@ import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ChildSpec, type ParentContext, resolveChild } from "./resolve.ts";
 import { exchange } from "./exchange.ts";
+import { registry } from "./registry.ts";
 import { capText, newAgentId, storedAgent } from "./sessions.ts";
-import { listLines, memoryRoot as memoryRootFor, planWorktree, type WorktreeOutcome, type WorktreeRef } from "./worktree.ts";
+import { listLines, memoryRoot as memoryRootFor, planWorktree, type WorktreeOutcome, type WorktreeRef, worktreeSubdir } from "./worktree.ts";
 import { emptyUsage, type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
@@ -47,6 +48,7 @@ export const outputSchema = Type.Object({
         branch: Type.Optional(Type.String()),
         files: Type.Optional(Type.Array(Type.String(), { description: "changed files (uncommitted, untracked and committed)" })),
         commits: Type.Optional(Type.Array(Type.String(), { description: 'commits made since the worktree was created, "<hash> <subject>"' })),
+        note: Type.Optional(Type.String({ description: "why the worktree was kept although nothing changed in its files, or where work may be outside its branch (detached HEAD, another branch, a stash)" })),
       },
       { description: 'Only for isolation "worktree"' },
     ),
@@ -104,6 +106,7 @@ export function worktreeLines(w: WorktreeOutcome | undefined): string[] {
   if (!w?.changed) return [];
   return [
     `Worktree kept: ${w.path} (branch ${w.branch})`,
+    ...(w.note ? [`Note: ${w.note}`] : []),
     ...(w.files.length > 0 ? ["Changed files:", ...listLines(w.files, SHOWN)] : []),
     ...(w.commits.length > 0 ? ["Commits:", ...listLines(w.commits, SHOWN)] : []),
   ];
@@ -147,13 +150,20 @@ async function executeAgent(
   const agentId = input.resume ?? newAgentId();
   let worktree: WorktreeRef | undefined;
   if (stored) worktree = stored.worktree;
-  else if ((input.isolation ?? def.isolation) === "worktree") worktree = await planWorktree(parent.cwd, agentId);
+  let worktreeWarning: string | undefined;
+  if (!stored && (input.isolation ?? def.isolation) === "worktree") {
+    worktree = await planWorktree(parent.cwd, agentId);
+    const { subdir, warning } = await worktreeSubdir(worktree, parent.cwd);
+    if (subdir !== "") worktree.subdir = subdir;
+    worktreeWarning = warning;
+  }
 
   // Memory: project and local live under the main checkout (never the agent's worktree); outside a repo, the parent's cwd.
   const memoryRoot = await memoryRootFor(def.memory, def.name, parent.cwd);
 
   const spec = resolveChild(def, input as CallInput, config, parent, { agentId, worktree, memoryRoot });
   scripts.addAgent(toolCallId, spec.agentId);
+  if (worktreeWarning) spec.warnings.push(worktreeWarning);
   if (stored && input.isolation !== undefined) {
     spec.warnings.push(`"isolation" was ignored on a resume: the agent keeps how it was started (${worktree ? "in a worktree" : "without isolation"})`);
   }
@@ -204,14 +214,27 @@ export function agentTool(getConfig: () => Config, description: string, deliver:
         // The agent runs on its own, not tied to this call's signal; main hears of its end by message.
         let run!: Promise<AgentResult>;
         const spec = await new Promise<ChildSpec>((resolve, reject) => {
-          run = executeAgent(params, new AbortController().signal, undefined, getConfig(), parent, toolCallId, resolve);
+          // Its own signal, kept in the registry so a stop reaches it while it waits for a slot.
+          const controller = new AbortController();
+          run = executeAgent(params, controller.signal, undefined, getConfig(), parent, toolCallId, (spec) => {
+            registry.detach(spec.agentId, parent.sessionId, controller);
+            resolve(spec);
+          });
           run.then(() => {}, reject); // it failed before starting (unknown agent, bad resume, no repository...): throws here
         });
         const { agentId, model, warnings } = spec;
         const agentType = params.subagent_type ?? DEFAULT_AGENT;
+        const send = (content: string) => {
+          registry.forget(agentId);
+          try {
+            deliver(content);
+          } catch (err) {
+            console.error(`pi-pipipi: could not deliver the end of agent ${agentId}: ${(err as Error).message}`); // never crash pi
+          }
+        };
         run.then(
-          (r) => deliver(agentEndMessage(parent, agentId, r.agentType, r)),
-          (e: Error) => deliver(agentEndMessage(parent, agentId, agentType, undefined, e.message)),
+          (r) => send(agentEndMessage(parent, agentId, r.agentType, r)),
+          (e: Error) => send(agentEndMessage(parent, agentId, agentType, undefined, e.message)),
         );
         const result: AgentResult = { status: "running", agentId, agentType, model, output: "", usage: emptyUsage(), turns: 0, durationMs: 0, warnings };
         return {

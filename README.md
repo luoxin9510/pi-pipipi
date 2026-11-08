@@ -109,7 +109,7 @@ Result:
   durationMs: number;
   warnings: string[];
   error?: string;       // when failed
-  worktree?: { changed: boolean; path?: string; branch?: string; files?: string[]; commits?: string[] }; // isolation: "worktree" only
+  worktree?: { changed: boolean; path?: string; branch?: string; files?: string[]; commits?: string[]; note?: string }; // isolation: "worktree" only
 }
 ```
 
@@ -133,19 +133,23 @@ on its own branch, so it can edit freely without touching your checkout or other
 - The worktree is `<repo>/.pi/worktrees/<agentId>` on branch `pipipi/<agentId>`, based on the main checkout's `HEAD`.
   `/.pi/worktrees/` is added once to the repository's `info/exclude`, so worktrees never show up as untracked files.
   Local repositories without a remote work. Outside a git repository, or in one without commits, the call throws.
-- The agent's working directory (and the `Working directory:` line in its prompt) is the worktree. Uncommitted changes in
-  your checkout are not in it: the result carries a warning when there are any.
+- The agent's working directory (and the `Working directory:` line in its prompt) is the worktree. When the calling
+  session's cwd is a subdirectory of the repository, it is the same subdirectory inside the worktree (if that directory
+  is not in the starting commit, the worktree root, with a warning). Uncommitted changes in your checkout are not in it:
+  the result carries a warning when there are any.
 - Files listed in `.worktreeinclude` at the repository root (gitignore syntax) are copied into the worktree, but only
   those that are also gitignored, so tracked files are never duplicated. Directories are copied recursively.
 - When an exchange ends (completed, partial, failed or stopped), an unchanged worktree is removed with its branch. A
-  changed one (uncommitted or untracked files, or new commits) is kept, and the result's `worktree` gives `path`,
-  `branch`, `files` and `commits`. Unchanged: `worktree: { changed: false }`. Nothing is committed, merged or deleted for
+  changed one is kept, and the result's `worktree` gives `path`, `branch`, `files`, `commits` and sometimes a `note`.
+  Changed means: uncommitted, untracked or new commits, or gitignored files the agent made (`dist/`, `.env`; not `.pi/`
+  and not unmodified `.worktreeinclude` copies), or HEAD no longer on `pipipi/<agentId>` (detached, another branch), or
+  a stash made on that branch; the `note` says which of the last two. Unchanged: `worktree: { changed: false }`. Nothing is committed, merged or deleted for
   you; remove a kept one with `git worktree remove --force <path>` and `git branch -D <branch>`.
 - Resuming an agent re-enters its worktree. If the worktree was unchanged and so removed, it is recreated at the same
   path and branch from the current `HEAD`. If you removed a changed one but its branch remains, the call throws naming
   the path. The `isolation` of a resume call is ignored with a warning: the agent keeps how it was started.
 - A `run_in_background: true` agent that keeps a worktree reports it in its end message.
-- `/subagents worktrees` lists the kept `pipipi/*` worktrees of the current checkout (agent id, branch, files changed, commits,
+- `/subagents worktrees` lists the kept worktrees under `<repo>/.pi/worktrees/` of the current checkout (agent id, branch, files changed, commits,
   path) and removes the ones you pick. Before removing it asks to confirm and names what would be lost (the changed files
   and the commits on the branch). Removal deletes the worktree and its branch. It only looks at the checkout of the current
   directory, not at other repositories.
@@ -161,13 +165,17 @@ files and their memories carry over from Claude Code. `<name>` is the agent's `n
 | `project` | `<main checkout>/.claude/agent-memory/<name>/` (meant to be committed) |
 | `local` | `<main checkout>/.claude/agent-memory-local/<name>/` (added to the repository's `info/exclude` once) |
 
-- The main checkout is the repository root of the cwd of the session that calls `Agent`, never the agent's worktree, so
+- The main checkout is the repository root of the cwd of the session that calls `Agent` (from a linked worktree, the
+  main checkout), never the agent's worktree, so
   memory survives a removed worktree. Outside a repository `project` and `local` use that cwd, and no exclude file is written.
 - The directory is created when the agent starts. The system prompt gets a "Persistent memory" section: where the
   directory is, how to keep `MEMORY.md` a short index, and the first 200 lines or 25000 bytes of `MEMORY.md` (whichever
   comes first, with a note when cut). A resumed agent reads the current file.
 - Read, Write and Edit are enabled for the agent when its `tools` list lacks them. If `disallowedTools` names Write or Edit,
-  they stay denied: the memory is read-only, the prompt says so and the result carries a warning. Only the tools are
+  they stay denied and the other one is removed too (a `tools` list is overridden): the memory is read-only, the prompt says so
+  and the result carries a warning. A parameterised deny such as `Write(*.md)` denies the whole tool (pi has no per-path
+  rules), and the warning says so. A `MEMORY.md` that cannot be read (a directory, permissions) counts as empty, with a
+  warning. Only the tools are
   denied: an agent that still has Bash can write the file anyway, so deny Bash too when it must not change.
 - **Risk:** an agent with memory writes files outside its working directory (`~/.claude` for `user`, the main checkout
   for `project` and `local`), and what it saves is fed back into its prompt on later runs. Use `disallowedTools` for a
@@ -259,8 +267,8 @@ Delegating does not block main. When a codemode script starts an `Agent`, the wh
 the `codemode` call returns to main at once ("Script moved to the background (id S1) ..."), main's turn can end, and
 you can keep talking to main. The script keeps running and keeps orchestrating (`await tools.Agent(...)` still returns
 the full result, so it can filter and combine). When it ends, main gets a message with the script's return value, its
-error if it threw, and the agents it ran (id, type, status, cost). If main is idle the message starts a new turn; if
-main is running it arrives as a steer. A return value over 8 KB is cut in the message and the full text is written to
+error if it threw, and the agents it ran (id, type, status, cost). The message is always sent as a steer that
+triggers a turn: if main is running it arrives as a steer, otherwise (idle, or compacting) a new turn starts. A return value over 8 KB is cut in the message and the full text is written to
 a file whose path the message gives (in the parent session's `subagents/<session id>/` directory).
 
 | `run_in_background` on an `Agent` call | Effect |
@@ -355,8 +363,8 @@ The real suite drives the Agent tool in-process with real children: the pinned p
 real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 214 tests (77 real, 35
-fault, 24 panel, 13 tui, 12 parent, 41 worktree, 12 memory) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
+read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 231 tests (77 real, 39
+fault, 25 panel, 13 tui, 12 parent, 49 worktree, 16 memory) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
 (measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
 `usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never

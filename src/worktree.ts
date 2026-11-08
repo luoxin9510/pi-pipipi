@@ -3,7 +3,7 @@
 
 import { execFile } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 // Where a worktree is, and what it started from. Stored in the agent's meta file.
 export interface WorktreeRef {
@@ -11,12 +11,13 @@ export interface WorktreeRef {
   path: string; // <root>/.pi/worktrees/<agentId>
   branch: string; // pipipi/<agentId>
   base: string; // commit the worktree started from
+  subdir?: string; // the parent's cwd relative to the checkout; the child starts in the same directory inside the worktree
   removed?: "user"; // `/subagents worktrees` removed it (and its branch) while it held changes: a resume must not recreate it
 }
 
 // What an exchange leaves behind. `changed: false` means the worktree and its branch were removed; `gone` that the
 // worktree's directory had already vanished when the exchange ended (the exchange then adds a warning).
-export type WorktreeOutcome = { changed: false; gone?: true } | { changed: true; path: string; branch: string; files: string[]; commits: string[] };
+export type WorktreeOutcome = { changed: false; gone?: true } | { changed: true; path: string; branch: string; files: string[]; commits: string[]; note?: string };
 
 const EXCLUDE_LINE = "/.pi/worktrees/";
 const MAX_LISTED = 200; // files and commits reported per worktree
@@ -76,18 +77,34 @@ export async function planWorktree(cwd: string, agentId: string): Promise<Worktr
 export async function addExclude(root: string, line: string): Promise<void> {
   const file = resolve(root, await gitLine(root, ["rev-parse", "--git-path", "info/exclude"]));
   const text = existsSync(file) ? readFileSync(file, "utf8") : "";
-  if (text.split("\n").includes(line)) return;
+  if (text.split(/\r?\n/).includes(line)) return;
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${line}\n`);
 }
 
 // The git root of `cwd`, or undefined outside a repository.
+// In a linked worktree this is the main checkout (the parent of the shared `.git` directory).
 export async function gitRoot(cwd: string): Promise<string | undefined> {
   try {
-    return await gitLine(cwd, ["rev-parse", "--show-toplevel"]);
+    const top = await gitLine(cwd, ["rev-parse", "--show-toplevel"]);
+    const common = await gitLine(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).catch(() => "");
+    return basename(common) === ".git" ? dirname(common) : top;
   } catch (err) {
     if (!(err as Error).message.includes(NOT_A_REPO)) throw err;
     return undefined;
+  }
+}
+
+// Where in the worktree the child starts: the parent's cwd relative to the checkout, when that directory is in the
+// commit the worktree starts from; else the worktree root, with a warning.
+export async function worktreeSubdir(ref: WorktreeRef, cwd: string): Promise<{ subdir: string; warning?: string }> {
+  const sub = relative(ref.root, cwd);
+  if (sub === "" || sub.startsWith("..")) return { subdir: "" };
+  try {
+    await git(ref.root, ["cat-file", "-e", `${ref.base}:${sub.split(sep).join("/")}`]);
+    return { subdir: sub };
+  } catch {
+    return { subdir: "", warning: `${cwd} is not in the worktree (it is untracked or new); the agent starts at the worktree root` };
   }
 }
 
@@ -140,25 +157,52 @@ export function ensureWorktree(ref: WorktreeRef): Promise<string[]> {
   });
 }
 
-// Entries of `git status --porcelain -z`: "XY path", and for a rename or copy the old path as an extra entry.
-function statusPaths(out: string): string[] {
+// Entries of `git status --porcelain -z --ignored`: "XY path", and for a rename or copy the old path as an extra entry.
+// Ignored files ("!!") count unless they are under .pi/ or a copy `.worktreeinclude` made that is still identical.
+function statusPaths(out: string, ref: WorktreeRef): string[] {
   const entries = out.split("\0").filter((e) => e !== "");
   const paths: string[] = [];
   for (let i = 0; i < entries.length; i++) {
-    paths.push(entries[i].slice(3));
-    if (/^[RC]/.test(entries[i])) i++;
+    const path = entries[i].slice(3);
+    if (entries[i].startsWith("!!")) {
+      if (!path.startsWith(".pi/") && !sameBytes(join(ref.path, path), join(ref.root, path))) paths.push(path);
+    } else {
+      paths.push(path);
+      if (/^[RC]/.test(entries[i])) i++;
+    }
   }
   return paths;
 }
 
+function sameBytes(a: string, b: string): boolean {
+  try {
+    return readFileSync(a).equals(readFileSync(b));
+  } catch {
+    return false;
+  }
+}
+
+// Signs that work may sit outside the worktree's own branch: HEAD elsewhere, or a stash made on the branch.
+async function strayNotes(ref: WorktreeRef): Promise<string[]> {
+  const notes: string[] = [];
+  const head = await gitLine(ref.path, ["symbolic-ref", "-q", "HEAD"]).catch(() => "");
+  if (head !== `refs/heads/${ref.branch}`) {
+    notes.push(`the worktree is not on branch ${ref.branch} (HEAD is ${head === "" ? "detached" : head.replace("refs/heads/", "")}); its commits may be reachable only from there`);
+  }
+  const stashes = (await gitLine(ref.root, ["stash", "list", "--format=%gs"])).split("\n").filter((l) => /^(WIP on|On) /.test(l) && l.split(":")[0].endsWith(` ${ref.branch}`));
+  if (stashes.length > 0) notes.push(`${stashes.length} stash entr${stashes.length === 1 ? "y" : "ies"} made on ${ref.branch} (git stash list)`);
+  return notes;
+}
+
 async function inspect(ref: WorktreeRef): Promise<WorktreeOutcome> {
-  const status = statusPaths(await git(ref.path, ["status", "--porcelain", "-z", "--untracked-files=all"]));
+  const status = statusPaths(await git(ref.path, ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored"]), ref);
   const head = await gitLine(ref.path, ["rev-parse", "HEAD"]);
-  if (status.length === 0 && head === ref.base) return { changed: false };
+  const notes = await strayNotes(ref);
+  if (status.length === 0 && head === ref.base && notes.length === 0) return { changed: false };
   const committed = head === ref.base ? [] : (await git(ref.path, ["diff", "--name-only", "-z", ref.base, "HEAD"])).split("\0").filter((f) => f !== "");
   const commits = head === ref.base ? [] : (await gitLine(ref.path, ["log", "--format=%h %s", `${ref.base}..HEAD`])).split("\n").filter((l) => l !== "");
   const files = [...new Set([...status, ...committed])];
-  return { changed: true, path: ref.path, branch: ref.branch, files: files.slice(0, MAX_LISTED), commits: commits.slice(0, MAX_LISTED) };
+  return { changed: true, path: ref.path, branch: ref.branch, files: files.slice(0, MAX_LISTED), commits: commits.slice(0, MAX_LISTED), ...(notes.length > 0 ? { note: notes.join("; ") } : {}) };
 }
 
 async function remove(ref: WorktreeRef): Promise<void> {
@@ -215,8 +259,11 @@ export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
     throw err;
   });
   const found: WorktreeInfo[] = [];
-  for (const { path, branch } of entries.slice(1)) {
-    if (path === undefined || branch === undefined || !branch.startsWith("pipipi/") || !existsSync(path)) continue;
+  const dir = join(root, ".pi", "worktrees") + sep;
+  for (const { path } of entries.slice(1)) {
+    // By location, not branch name: a detached or renamed branch still belongs to the agent. Its branch is pipipi/<id>.
+    if (path === undefined || !path.startsWith(dir) || !existsSync(path)) continue;
+    const branch = `pipipi/${basename(path)}`;
     const head = await gitLine(path, ["rev-parse", "HEAD"]);
     const base = mainHead === undefined ? head : await gitLine(path, ["merge-base", head, mainHead]).catch((err) => {
       if (err.exitCode === 1) return head; // no common ancestor

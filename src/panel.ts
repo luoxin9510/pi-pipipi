@@ -113,7 +113,7 @@ export class Panel {
       if (row.kind === "agent") this.open(row.record); // a script has no screen
     } else if (data === "X" || matchesKey(data, "shift+x")) {
       void stopEverything(this.sessionId); // every script and subagent of the session; the rows show the result
-    } else if (data === "x") {
+    } else if (matchesKey(data, "x")) {
       // a row that is not running: nothing to stop
       const row = rows[this.selected]!;
       if (row.kind === "script") void scripts.stop(row.script.id);

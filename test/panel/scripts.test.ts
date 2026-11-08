@@ -106,3 +106,14 @@ test("ctrl+b: with an empty editor it backgrounds the foreground scripts and is 
   assert.equal(t.state, "background");
   panel.dispose();
 });
+
+test("P1: x also works in its kitty-protocol encoding; the key release does not stop anything", () => {
+  const { panel, calls, script } = setup("s-kitty");
+  script("c-kitty");
+  panel.handleKey(KEY.down, true);
+  assert.equal(panel.handleKey("\x1b[120;1:3u", true), true, "release swallowed");
+  assert.deepEqual(calls.stopped, []);
+  panel.handleKey("\x1b[120u", true);
+  assert.deepEqual(calls.stopped, ["c-kitty"]);
+  panel.dispose();
+});
