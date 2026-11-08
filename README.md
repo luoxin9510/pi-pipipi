@@ -2,7 +2,8 @@
 
 Claude Code-compatible subagents for [pi](https://pi.dev). The extension registers one tool, `Agent`, for codemode
 scripts. Each call runs an agent definition in its own `pi` subprocess and returns a structured result, so a script can
-run agents in parallel and filter what reaches the model.
+run agents in parallel and filter what reaches the model. In interactive pi you can watch the subagents in a panel
+below the editor, open one in a full-screen view, and talk to it (see [Watching and talking](#watching-and-talking-to-subagents)).
 
 ```js
 // inside a codemode script
@@ -43,7 +44,7 @@ Invalid files are skipped with a warning.
 |---|---|
 | `name`, `description`, body | Same as Claude Code. The body replaces pi's default system prompt. |
 | `tools`, `disallowedTools` | Without `tools` the agent gets your normal pi tools (`defaultTools`) and every installed extension. Otherwise mapped to `--tools` / `--exclude-tools`. `Read→read`, `Write→write`, `Edit→edit`, `Bash→bash`, `Grep→grep`, `Glob→find`, `LS→ls`, `mcp__*` unchanged. A `tools` list without `mcp__` entries also excludes all MCP tools. A `Bash(...)` deny rule removes the whole tool. Tools with no pi equivalent are dropped with a warning. |
-| `codemode` | `false` keeps this agent on direct tools. Default: children see only the `codemode` tool and call their allowed tools from scripts (the `tools` list still binds inside scripts). |
+| `codemode` | `false` keeps this agent on direct tools. Default: children see only the `codemode` tool and call their allowed tools from scripts. See [Codemode-only children](#codemode-only-children). |
 | `model` | See [Model selection](#model-selection). |
 | `effort` | `--thinking` |
 | `maxTurns` | The child is stopped after that many turns; the result is `partial`. |
@@ -86,8 +87,8 @@ Without Anthropic credentials, haiku (and so every agent by default) fails with 
 
 Input (compatible with Claude Code's Agent tool): `{ description, prompt, subagent_type?, model?, effort?, resume? }`.
 `subagent_type` defaults to `general-purpose`. `run_in_background`, `isolation` and `name` are accepted and ignored
-with a warning. Children run as `pi --mode rpc` and get the prompt over stdin, so prompts
-of any size work.
+with a warning. Children run as `pi --mode rpc` and get the prompt as a protocol message on stdin, not as a command
+line argument, so prompts of any size work.
 
 Result:
 
@@ -111,9 +112,114 @@ A child that fails returns `status: "failed"` instead of throwing, so scripts ke
 `--model` unchanged, and the child fails with pi's own error.
 
 Children run with `PIPIPI_DEPTH=1` and get no `Agent` tool: nesting is one level. Child sessions are stored next to
-the parent session under `subagents/<parent session id>/`. With an in-memory parent session, children are in memory
-too and cannot be resumed. A resume without `subagent_type` reuses the agent type of the first run; a different
+the parent session under `subagents/<parent session id>/`, with a small meta file per child (type, description, model,
+status, turns, usage, times). With an in-memory parent session (`pi --no-session`), children are in memory too: they
+cannot be resumed, and the panel, `/subagents` and the subagent screen cannot show them (`/subagents` says so). The
+`Agent` tool itself works as before. A resume without `subagent_type` reuses the agent type of the first run; a different
 `subagent_type` is an error. Children inherit the parent's project trust.
+
+## Watching and talking to subagents
+
+This part needs interactive pi. In `-p` mode only the `Agent` tool exists.
+
+### The panel
+
+While a session has subagents, a panel sits below the editor. One row per subagent, oldest first:
+
+```
+Subagents (2)
+  ● running · Explore(find auth code) · 3 turns · read · $0.0004
+  ✓ completed · general-purpose(summarize) · 2 turns · $0.0011
+```
+
+| Marker | Status |
+|---|---|
+| `●` | running |
+| `✓` | completed |
+| `◐` | partial (stopped by `maxTurns`) |
+| `✗` | failed |
+| `■` | stopped by you or by an abort |
+
+A row shows the type and description, turns, the last tool, and cost. A finished row stays 30 s and then drops out;
+running rows stay. The panel hides when it is empty. Older subagents of the session are still reachable with
+`/subagents`.
+
+| Key | Effect |
+|---|---|
+| `↓` on an empty editor | focus the panel |
+| `↓` / `↑` | move the selection (`↑` on the first row, or `Esc`, goes back to the editor) |
+| `Enter` | open the selected subagent's screen |
+| `x` | stop the selected subagent (nothing happens on a row that is not running) |
+
+While the panel has focus it takes every key, typing included. Otherwise it takes none.
+
+`/subagents` lists every subagent of the session, newest first, including finished ones, ones from before a `/reload`
+and ones from a resumed parent session. Pick one to open its screen.
+
+### The subagent screen
+
+It covers the whole terminal. It is a view: main's pi keeps running underneath, and your main session is not
+switched. The header shows `‹ main (esc or /main)`, the subagent (`type(description)`, status, turns) and whether main
+is idle or running. Below it is the subagent's conversation, drawn like pi draws a session: messages, tool calls with
+their results, codemode scripts in full. It grows while the subagent runs (it updates when a message is finished, not
+per token). There is one input line at the bottom.
+
+| Input | Effect |
+|---|---|
+| `PgUp` / `PgDn`, `↑` / `↓`, `Home` / `End` | scroll (`End` follows the live end) |
+| `Esc` or `/main` | back to main |
+| text + `Enter` | talk to the subagent (below) |
+| `/stop` | stop the subagent |
+| `/model` | pick a model from a list drawn on the screen (`↑↓`, `Enter`, `Esc`); `/model provider/id` names one |
+| any other `/command` | says it is not available here |
+
+There is no `main` row in the panel: the screen covers it, so use the back hint, `Esc` or `/main`.
+
+**Talking.** Text you type goes to the subagent. If it is running, it is sent as a steer and the subagent takes it
+after its current step. If it is finished, it is continued from its own session with its own prompt, tools and model,
+and the reply streams in. After each exchange main gets a short note (what you said and the reply, cut at 2000
+characters): as a steer if main is running, stored without starting a turn if main is idle.
+
+**One process per subagent.** A subagent never runs two exchanges at once. If you type to a subagent that main's
+script is resuming, your message waits in a queue and goes out when it is free (the screen says "queued"). The same
+holds the other way round. A waiting resume does not hold one of the `maxConcurrent` slots.
+
+**Stop.** `x` in the panel or `/stop` on the screen aborts a running subagent. The script's `Agent` call gets a
+result, not an exception: `status: "failed"`, `error: "stopped by user"`. Turns and cost so far are kept. The
+subagent is not lost: main can resume it with `resume`, or you can type to it.
+
+**`/model`.** Changes the model of that subagent's conversation. A running subagent switches at once; the choice is
+kept in its meta file for later exchanges. The agent definition file is not touched. Only models pi lists as available
+are accepted.
+
+## Codemode-only children
+
+By default a child sees only the `codemode` tool (pi's `codemode` extension in `only` mode, added with `-e`) and calls
+its allowed tools from scripts. The `tools` / `disallowedTools` of the agent still bind inside those scripts, and a
+`tools` list without `mcp__` entries still removes every MCP tool. The child's system prompt gets one extra line:
+"Use the `codemode` tool for all tool calls, and put independent calls in one script."
+
+Why: fewer turns and less wall time. In the [comparison](#codemode-only-vs-direct-tools) below, codemode-only needed
+2 to 3 turns where direct tools needed 2.6 to 4.4, at about the same cost.
+
+Opt out:
+
+- per agent: `codemode: false` in the agent file
+- for everything: `"childCodemode": "inherit"` in `pipipi` settings (direct tools, as in v1)
+
+## MCP
+
+MCP tools are excluded from a child whenever its agent file has a `tools` list without `mcp__` entries. An agent with
+no `tools` list gets your normal tools and every installed extension, MCP included. `mcpServers` in an agent file is
+still ignored (a warning).
+
+## Limits and memory
+
+- The registry, panel and queues live in the memory of the pi process. After `/reload` or in a resumed session the
+  registry is rebuilt from the meta files; a meta file left in `running` (pi died) shows as `stopped`.
+- `maxConcurrent` (default 20) caps running children per pi process; extra calls and extra exchanges queue.
+- Each child is a full `pi`, about 220 MB (see [Stress test](#stress-test)).
+- An in-memory parent session keeps nothing on disk: no meta files, no viewing, no resume.
 
 ## Config
 
@@ -137,14 +243,21 @@ npm install
 npm test            # real suite (test/real) + fault suite (test/faults)
 npm run test:real   # only the real suite
 npm run test:faults # only the fault suite: scripted fake pi (test/fake-pi.mjs), no model, free
+npm run test:panel  # panel rows, focus rules and screen rendering against the registry: no pi, no model, free
+npm run test:tui    # drives real interactive pi in a pty (node-pty + headless xterm), real haiku
 npm run typecheck
 ```
 
+`npm test` runs all four suites (`test/real`, `test/faults`, `test/panel`, `test/tui`). The `test/tui` tests start the
+real `pi` with this checkout loaded and read its screen, so they are slow (about 25 to 30 s each) and each costs about a
+cent. Never run `npm test` from inside a test.
+
 The real suite drives the Agent tool in-process with real children: the pinned pi (`node_modules/.bin/pi`, 1.5.0) on
-real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`. Each test gets a temp repo, a temp
+real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
+(the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. One full `npm test` runs
-54 real and 13 fault tests in about 35 s and costs about $0.01 (measured with `PIPIPI_COST_LOG=<file> npm test`,
+read structure and side effects (the child's session file, files it wrote), never wording. The v1 suites (54 real and 13 fault tests)
+ran in about 35 s and cost about $0.01 (measured with `PIPIPI_COST_LOG=<file> npm test`,
 which makes each test file append its sum of `usage.cost.total`). The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
 settles or never exits, exact usage arithmetic.
@@ -229,7 +342,7 @@ semaphore and never lets more than 20 children start.
 Each child is a full `pi` that loads your installed extensions, about 220 MB each. With the default limit of 20,
 plan for about 4.5 GB of memory while a large fan-out runs. Lower `maxConcurrent` on smaller machines.
 
-Design notes and tickets: `.scratch/pi-pipipi/`.
+Design notes and tickets: `.scratch/pi-pipipi/` (v1) and `.scratch/pi-pipipi-v2/` (v2).
 
 ## License
 

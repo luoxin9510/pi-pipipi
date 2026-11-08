@@ -1,7 +1,8 @@
 # AGENTS.md
 
 pi-pipipi is a pi extension: one `Agent` tool (codemode exposure) that runs Claude Code-compatible subagents as `pi`
-subprocesses. Design: `.scratch/pi-pipipi/decisions.md` and `spec.md`. Tickets: `.scratch/pi-pipipi/issues/`.
+subprocesses. Design: `.scratch/pi-pipipi/decisions.md` and `spec.md` (v1), `.scratch/pi-pipipi-v2/spec.md` (v2: panel, subagent
+screen, rpc and codemode-only children). Tickets: `.scratch/pi-pipipi/issues/`, `.scratch/pi-pipipi-v2/issues/`.
 
 ## Code style
 
@@ -16,10 +17,15 @@ subprocesses. Design: `.scratch/pi-pipipi/decisions.md` and `spec.md`. Tickets: 
 ## Layout
 
 - `src/` TypeScript loaded directly by pi (no build). Import local files with the `.ts` extension.
+- Main `src/` files: `index.ts` (entry, `/subagents`, session start), `agent-tool.ts` (the `Agent` tool), `exchange.ts`
+  (the one path for a run: per-subagent queue, concurrency slot, registry updates, note to main), `runner.ts` (rpc
+  child process), `resolve.ts` (agent definition to child args), `registry.ts` (subagents of the session, meta files,
+  stop, set model), `panel.ts` (panel below the editor), `subagent-screen.ts` (full-screen view), `talk.ts` (text typed
+  on the screen), `subagents-command.ts`, `child-codemode.ts` (codemode-only extension loaded by children).
 - `src/builtin/*.md` built-in agents in Claude Code format.
 - `test/real/*.test.ts` node:test against real pi and real haiku; `test/faults/*.test.ts` scripted faults on fake pi.
-  `npm test` runs both (Node >= 22.18 strips types).
-- `test/panel/*.test.ts` panel rows and focus rules against the registry (no pi, no model). `test/tui/*.test.ts` drive real
+  `npm test` runs these and the two below (Node >= 22.18 strips types).
+- `test/panel/*.test.ts` panel rows, focus rules and screen rendering against the registry (no pi, no model). `test/tui/*.test.ts` drive real
   interactive pi in a pty (`test/tui/harness.ts`: node-pty + headless xterm); real haiku, few and time-bounded.
 - `test/fake-pi.mjs` stands in for the `pi` binary in the fault suite (and `npm run stress -- --fake`).
 - `evals/` real-model evals, `stress/` concurrency test. Dev scripts, not shipped.
