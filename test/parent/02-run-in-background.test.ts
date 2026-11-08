@@ -32,7 +32,7 @@ test("the end message of a background agent carries id, status, cost and the out
   const parent: any = { sessionFile: undefined, sessionId: "s" };
   const text = agentEndMessage(parent, "abc", "explore", r);
   assert.match(text, /^Background agent abc explore completed \(\$0\.0123\)\./);
-  assert.match(text, new RegExp(`\\.\\.\\. \\(cut, ${RESULT_LIMIT + 5} chars; all of it is in `));
+  assert.match(text, new RegExp(`\\.\\.\\. \\(cut, ${RESULT_LIMIT + 5} bytes; all of it is in `));
   assert.match(agentEndMessage(parent, "abc", "explore", undefined, "aborted"), /stopped.*\nError: aborted/);
 });
 

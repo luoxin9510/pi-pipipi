@@ -91,6 +91,8 @@ subagent and `x` / `/stop` (they need a live stdin).
   finds it by the `_I.jsonl` suffix). A resume starts a new child with the same flags and must append to that file.
 - Child sessions live in `<parent session dir>/subagents/<parent session id>/`, next to a meta file `<agentId>.json`
   that pi-pipipi writes (agent type, description, model, status, usage, times). Your agent never reads these.
+- A background script's end message or a detached agent's end message over 8 KB (UTF-8 bytes) is cut, and the full text
+  is written to `subagents/<parent session id>/` next to the child sessions (a temp dir when the parent session is in memory).
 - The subagent screen reads the file with pi's `parseSessionEntries` and `buildSessionContext` and draws messages with
   role `user`, `assistant` (content parts `text`, `thinking`, `toolCall`) and `toolResult`. A different session format
   only affects `transcriptParts` in `src/subagent-screen.ts`.

@@ -28,16 +28,16 @@ function wrapper(t: Loaded) {
   installBackground({ registerTool: (d: any) => (tool = d) } as any, (c) => delivered.push(c), () => true, (pi) =>
     pi.registerTool({
       name: "codemode",
-      async execute(id: string, params: { script: Script }, signal: AbortSignal | undefined) {
+      async execute(id: string, params: { script: Script; isError?: boolean }, signal: AbortSignal | undefined) {
         const agent = async (extra: Record<string, unknown> = {}) =>
           (await t.tool.execute(`${id}/1`, { description: "d", prompt: "p", ...extra }, signal, undefined, t.ctx)).structuredContent;
-        return { content: [{ type: "text", text: await params.script({ id, signal, agent }) }] };
+        return { content: [{ type: "text", text: await params.script({ id, signal, agent }) }], ...(params.isError ? { isError: true } : {}) };
       },
     } as any),
   );
   return {
     delivered,
-    run: (id: string, script: Script, signal?: AbortSignal) => tool.execute(id, { script }, signal, undefined, t.ctx),
+    run: (id: string, script: Script, signal?: AbortSignal, isError?: boolean) => tool.execute(id, { script, isError }, signal, undefined, t.ctx),
     runWith: (ctx: unknown, id: string, script: Script) => tool.execute(id, { script }, undefined, undefined, ctx),
   };
 }
@@ -223,4 +223,90 @@ test("no UI (print mode, `pi -p`): a script that starts an agent stays in the fo
   const result = await w.runWith(ctx, "cPrint", async ({ agent }) => `got ${(await agent()).status}`);
   assert.equal(result.content[0].text, "got completed");
   assert.deepEqual(w.delivered, []);
+});
+
+test("a foreground script whose result is an error ends failed; a throw ends failed", async () => {
+  const s = sandbox();
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool(cfg, { cwd: s.repo });
+  const w = wrapper(t);
+  await w.run("cFgErr", async ({ agent }) => (await agent({ run_in_background: false }), "bad"), undefined, true);
+  assert.equal(scripts.list("parent-id").find((x) => x.callId === "cFgErr")!.state, "failed");
+  await assert.rejects(w.run("cFgThrow", async ({ agent }) => (await agent({ run_in_background: false }), Promise.reject(new Error("x")))));
+  assert.equal(scripts.list("parent-id").find((x) => x.callId === "cFgThrow")!.state, "failed");
+});
+
+test("every agent failed: the script ends failed with an error line even if it returned normally", async () => {
+  const s = sandbox();
+  s.scenario({ lines: [ev.session()], exitCode: 3 });
+  const t = await loadTool(cfg, { cwd: s.repo });
+  const w = wrapper(t);
+  await w.run("cAllFail", async ({ agent }) => `status ${(await agent()).status}`);
+  await until("message", () => w.delivered.length === 1);
+  assert.match(w.delivered[0], /^Background script S\d+ failed\.\nError: every agent failed/);
+  assert.equal(scripts.list("parent-id").find((x) => x.callId === "cAllFail")!.state, "failed");
+});
+
+test("over 8 KB counts bytes (UTF-8) and cuts at a character boundary", async () => {
+  const s = sandbox();
+  s.scenario({ lines: happyLines() });
+  const sessionFile = join(s.root, "sessions", "main.jsonl");
+  const t = await loadTool(cfg, { cwd: s.repo, sessionFile, sessionId: "mb-id" });
+  const w = wrapper(t);
+  const text = "é".repeat(3000); // 6000 chars, 6000 bytes: under the cap
+  const wide = "界".repeat(3000); // 3000 chars, 9000 bytes: over it
+  await w.run("cMbShort", async ({ agent }) => (await agent(), text));
+  await until("short", () => w.delivered.length === 1);
+  assert.doesNotMatch(w.delivered[0], /all of it is in/);
+  await w.run("cMbWide", async ({ agent }) => (await agent(), wide));
+  await until("wide", () => w.delivered.length === 2);
+  const shown = w.delivered[1].split("Return value:\n")[1].split("\n... (cut")[0];
+  assert.equal(shown, "界".repeat(2666), "8000 bytes = 2666 whole characters");
+  assert.doesNotMatch(shown, /\ufffd/);
+  assert.match(w.delivered[1], /cut, 9000 bytes/);
+});
+
+test("stopping a script: it cannot start another agent while its agents stop", async () => {
+  const s = sandbox();
+  s.scenario(hang());
+  const t = await loadTool(cfg, { cwd: s.repo });
+  const w = wrapper(t);
+  let second: unknown;
+  await w.run("cNoMore", async ({ agent }) => {
+    await agent();
+    second = await agent().catch((e) => e);
+    return "after";
+  });
+  const script = scripts.list("parent-id").find((x) => x.callId === "cNoMore")!;
+  await until("agent running", () => script.agents.length === 1 && registry.handle(script.agents[0]) !== undefined);
+  await scripts.stop(script.id);
+  await until("message", () => w.delivered.length === 1);
+  assert.ok(second instanceof Error, "the second agent did not start");
+  assert.equal(script.agents.length, 1);
+});
+
+test("ended scripts leave the registry (the last 50 stay for the panel) and no longer own tool calls", async () => {
+  const s = sandbox();
+  s.scenario({ lines: happyLines() });
+  const t = await loadTool(cfg, { cwd: s.repo, sessionId: "leak-id" });
+  const w = wrapper(t);
+  for (let i = 0; i < 55; i++) await w.run(`cLeak${i}`, async () => "x", undefined, false);
+  const ended = scripts.list("leak-id");
+  assert.equal(ended.length, 50);
+  assert.equal(ended.at(-1)!.callId, "cLeak54");
+  assert.equal(scripts.owner("cLeak54/1"), undefined, "an ended script owns nothing");
+});
+
+test("no UI: run_in_background true waits like a foreground call and the description says nothing of background scripts", async () => {
+  const s = sandbox();
+  s.scenario({ lines: happyLines("pr-out") });
+  const t = await loadTool(cfg, { cwd: s.repo });
+  const ctx = { ...t.ctx, hasUI: false };
+  const r = await t.tool.execute("cNoUi/1", { description: "d", prompt: "p", run_in_background: true }, undefined, undefined, ctx);
+  assert.equal(r.structuredContent.status, "completed");
+  assert.equal(r.structuredContent.output, "pr-out");
+  assert.deepEqual(t.messages, []);
+  const noUi = await loadTool(cfg, { cwd: s.repo, hasUI: false });
+  assert.doesNotMatch(noUi.tool.description, /background/i);
+  assert.match(t.tool.description, /background/i);
 });

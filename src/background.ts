@@ -26,6 +26,7 @@ class ScriptRegistry {
   private stoppers = new Map<string, () => Promise<void>>(); // callId -> stop this running script
   private listeners = new Set<() => void>();
   private counter = 0;
+  private keepEnded = 50; // ended scripts kept for the panel's linger; older ones are dropped
 
   list(sessionId: string): ScriptRecord[] {
     return [...this.scripts.values()].filter((s) => s.sessionId === sessionId);
@@ -37,7 +38,7 @@ class ScriptRegistry {
 
   // The script whose codemode call id prefixes this tool call id (nested ids are "<codemode id>/<n>").
   owner(toolCallId: string): ScriptRecord | undefined {
-    return [...this.scripts.values()].find((s) => toolCallId.startsWith(`${s.callId}/`));
+    return [...this.scripts.values()].find((s) => (s.state === "foreground" || s.state === "background") && toolCallId.startsWith(`${s.callId}/`));
   }
 
   subscribe(listener: () => void): () => void {
@@ -59,6 +60,7 @@ class ScriptRegistry {
   agentStarting(toolCallId: string, runInBackground?: boolean): void {
     const script = this.owner(toolCallId);
     if (!script) return;
+    if (script.stopRequested) throw new Error(`script ${script.id} is being stopped`);
     if (runInBackground === false) script.pinned = true;
     else if (runInBackground === undefined && script.state === "foreground" && !script.pinned) this.movers.get(script.callId)!();
   }
@@ -76,6 +78,8 @@ class ScriptRegistry {
       script.endedAt = Date.now();
       this.movers.delete(script.callId);
       this.stoppers.delete(script.callId);
+      const ended = [...this.scripts.values()].filter((x) => x.endedAt !== undefined);
+      for (const old of ended.slice(0, Math.max(0, ended.length - this.keepEnded))) this.scripts.delete(old.id);
     }
     this.changed();
   }
@@ -121,7 +125,8 @@ const BACKGROUND_TEXT = (id: string) =>
 const textOf = (result: { content?: { type: string; text?: string }[] } | undefined) =>
   (result?.content ?? []).map((c) => c.text ?? "").join("");
 
-export function endMessage(script: ScriptRecord, state: ScriptState, text: string, parent: { sessionFile: string | undefined; sessionId: string }): string {
+// `allFailed`: the script returned normally (text is its return value) but every agent it ran failed or was stopped.
+export function endMessage(script: ScriptRecord, state: ScriptState, text: string, parent: { sessionFile: string | undefined; sessionId: string }, allFailed = false): string {
   text = capText(text, parent, `script-${script.id}`);
   const agents = script.agents.map((id) => {
     const r = registry.get(id);
@@ -129,7 +134,7 @@ export function endMessage(script: ScriptRecord, state: ScriptState, text: strin
   });
   return [
     `Background script ${script.id} ${state}.`,
-    state === "failed" ? `Error: ${text}` : `Return value:\n${text}`,
+    allFailed ? `Error: every agent failed\nReturn value:\n${text}` : state === "failed" ? `Error: ${text}` : `Return value:\n${text}`,
     agents.length > 0 ? `Agents:\n${agents.join("\n")}` : "Agents: none",
   ].join("\n");
 }
@@ -166,12 +171,20 @@ export function installBackground(
           moved();
         },
         async () => {
-          script.stopRequested = true;
+          script.stopRequested = true; // from here on the script's Agent calls throw (agentStarting)
           await registry.stopAll(script.agents); // each running agent ends failed / "stopped by user"
           own.abort(); // the script itself, and any agent still waiting for a slot
         },
       );
-      const endState = (result?: { isError?: boolean }): ScriptState => (script.stopRequested || own.signal.aborted ? "stopped" : result?.isError ? "failed" : "completed");
+      // How the script ended: stopped; failed (an error result, a throw, or every agent it ran failed or was stopped);
+      // else completed. `text` is what an end message shows: the error, or the return value.
+      const settle = (result?: { isError?: boolean; content?: { type: string; text?: string }[] }, err?: Error) => {
+        const everyAgentFailed = script.agents.length > 0 && script.agents.every((a) => ["failed", "stopped"].includes(registry.get(a)?.status ?? ""));
+        const state: ScriptState = script.stopRequested || own.signal.aborted ? "stopped" : err || result?.isError || everyAgentFailed ? "failed" : "completed";
+        scripts.setState(script, state);
+        const returned = !err && !result?.isError && state === "failed"; // it ended normally, but every agent failed
+        return { state, text: err ? err.message : textOf(result), allFailed: returned };
+      };
       if (signal?.aborted) abort();
       else signal?.addEventListener("abort", abort, { once: true });
 
@@ -181,25 +194,18 @@ export function installBackground(
         signal?.removeEventListener("abort", abort);
         try {
           const result = await run;
-          scripts.setState(script, endState());
+          settle(result);
           return result;
         } catch (err) {
-          scripts.setState(script, own.signal.aborted ? "stopped" : "failed");
+          settle(undefined, err as Error);
           throw err;
         }
       }
-      run.then(
-        (result: any) => {
-          const state = endState(result);
-          scripts.setState(script, state);
-          deliver(endMessage(script, state, textOf(result), parent));
-        },
-        (err: Error) => {
-          const state = endState({ isError: true });
-          scripts.setState(script, state);
-          deliver(endMessage(script, state, err.message, parent));
-        },
-      );
+      const ended = (result?: any, err?: Error) => {
+        const { state, text, allFailed } = settle(result, err);
+        deliver(endMessage(script, state, text, parent, allFailed));
+      };
+      run.then((result: any) => ended(result), (err: Error) => ended(undefined, err));
       return { content: [{ type: "text", text: BACKGROUND_TEXT(script.id) }] };
     },
   });

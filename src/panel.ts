@@ -73,9 +73,9 @@ export class Panel {
     this.selected = Math.min(this.selected, Math.max(0, rows.length - 1));
     clearTimeout(this.timer);
     const endOf = (r: Row) => (r.kind === "script" ? r.script.endedAt : r.record.endedAt);
-    const ends = rows.map(endOf).filter((t) => t !== undefined).map((t) => Math.max(0, t! + this.options.lingerMs - Date.now()) + 5);
+    const delays = rows.map(endOf).filter((t) => t !== undefined).map((t) => Math.max(0, t! + this.options.lingerMs - Date.now()) + 5);
     // wake up when the next finished row expires, and every second while a script runs (its elapsed time)
-    const wait = Math.min(...ends, rows.some((r) => r.kind === "script" && r.script.endedAt === undefined) ? 1000 : Infinity);
+    const wait = Math.min(...delays, rows.some((r) => r.kind === "script" && r.script.endedAt === undefined) ? 1000 : Infinity);
     if (wait !== Infinity) {
       this.timer = setTimeout(() => {
         this.sync();

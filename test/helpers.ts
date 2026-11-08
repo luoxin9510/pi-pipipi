@@ -75,6 +75,7 @@ interface FakeCtx {
   model?: { provider: string; id: string };
   thinkingLevel?: string;
   trusted?: boolean;
+  hasUI?: boolean;
   sessionFile?: string;
   sessionId?: string;
   notes?: string[]; // collects ui notifications even when loading throws
@@ -96,7 +97,7 @@ export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
   pipipi(pi as any);
   const ctx = {
     cwd: c.cwd,
-    hasUI: true,
+    hasUI: c.hasUI ?? true,
     isIdle: () => true,
     ui: { notify: (m: string) => notes.push(m), setWidget: () => {}, onTerminalInput: () => () => {}, custom: async () => {} },
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-opus-5-5" },

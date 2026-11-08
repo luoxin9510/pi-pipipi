@@ -60,7 +60,7 @@ export default function pipipi(pi: ExtensionAPI) {
     });
     const warnings = registry.rebuild(parentContext(ctx));
     const discovery = discoverAgents(ctx.cwd);
-    pi.registerTool(agentTool(() => config!, describeAgents(discovery, config.backgroundScripts), deliver));
+    pi.registerTool(agentTool(() => config!, describeAgents(discovery, config.backgroundScripts, ctx.hasUI), deliver));
     if (ctx.hasUI) {
       installPanel(() => current!, config);
       for (const warning of [...warnings, ...discovery.warnings]) ctx.ui.notify(`pi-pipipi: ${warning}`, "warning");

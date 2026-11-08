@@ -31,15 +31,19 @@ export function newAgentId(): string {
   return [...randomBytes(12)].map((b) => alphabet[b % alphabet.length]).join("");
 }
 
-export const RESULT_LIMIT = 8000;
+export const RESULT_LIMIT = 8000; // bytes (UTF-8)
 
-// Text for a message to main: as is up to RESULT_LIMIT chars, else the first RESULT_LIMIT chars plus the path of a file
-// holding all of it (the parent session's subagents dir; a temp dir for an in-memory session).
+// Text for a message to main: as is up to RESULT_LIMIT bytes, else the first RESULT_LIMIT bytes (cut at a character
+// boundary) plus the path of a file holding all of it (the parent session's subagents dir; a temp dir for an in-memory
+// session).
 export function capText(text: string, parent: SessionRef, name: string): string {
-  if (text.length <= RESULT_LIMIT) return text;
+  const bytes = Buffer.from(text);
+  if (bytes.length <= RESULT_LIMIT) return text;
   const dir = parent.sessionFile ? subagentSessionDir(parent) : mkdtempSync(join(tmpdir(), "pipipi-"));
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${name}-${Date.now()}.txt`);
   writeFileSync(file, text);
-  return `${text.slice(0, RESULT_LIMIT)}\n... (cut, ${text.length} chars; all of it is in ${file})`;
+  let end = RESULT_LIMIT;
+  while ((bytes[end] & 0xc0) === 0x80) end--; // not in the middle of a multibyte character
+  return `${bytes.subarray(0, end).toString("utf8")}\n... (cut, ${bytes.length} bytes; all of it is in ${file})`;
 }

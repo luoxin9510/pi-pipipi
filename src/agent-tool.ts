@@ -56,14 +56,17 @@ const DETACHED_RULES = [
   "agentId (output is empty); the agent finishes on its own and you get its output, status and cost as a message.",
 ];
 
-export function describeAgents({ agents }: Discovery, backgroundScripts: boolean): string {
+// Print mode (no UI): pi exits when the turn ends, so nothing runs in the background and the model is not told of it.
+const PRINT_RULES = ["Every call waits for its agent and returns its result."];
+
+export function describeAgents({ agents }: Discovery, backgroundScripts: boolean, hasUI: boolean): string {
   const list = [...agents.values()].map((a) => `- ${a.name}: ${a.description}`).join("\n");
   return [
     "Run a subagent: a separate pi session with its own system prompt, tools and model. It sees only `prompt`, so",
     "write a complete task. The result's `output` is the agent's final message; filter it before returning it.",
     "Run independent agents in parallel with Promise.all.",
     "",
-    ...(backgroundScripts ? BACKGROUND_RULES : DETACHED_RULES),
+    ...(!hasUI ? PRINT_RULES : backgroundScripts ? BACKGROUND_RULES : DETACHED_RULES),
     "",
     "Available agents (subagent_type):",
     list,
@@ -155,14 +158,14 @@ export function agentTool(getConfig: () => Config, description: string, deliver:
       ctx: ExtensionContext,
     ) {
       scripts.agentStarting(toolCallId, params.run_in_background); // the first plain Agent call moves its script to the background
-      if (params.run_in_background === true) {
+      const parent = parentContext(ctx);
+      if (params.run_in_background === true && ctx.hasUI) {
         // The agent runs on its own, not tied to this call's signal; main hears of its end by message.
         let spec: ChildSpec | undefined;
-        const run = executeAgent(params, new AbortController().signal, undefined, getConfig(), parentContext(ctx), toolCallId, (s) => (spec = s));
+        const run = executeAgent(params, new AbortController().signal, undefined, getConfig(), parent, toolCallId, (s) => (spec = s));
         if (!spec) await run; // it failed before starting (unknown agent, bad resume...): throws here
         const { agentId, model, warnings } = spec!;
         const agentType = params.subagent_type ?? DEFAULT_AGENT;
-        const parent = parentContext(ctx);
         run.then(
           (r) => deliver(agentEndMessage(parent, agentId, r.agentType, r)),
           (e: Error) => deliver(agentEndMessage(parent, agentId, agentType, undefined, e.message)),
@@ -181,7 +184,7 @@ export function agentTool(getConfig: () => Config, description: string, deliver:
         signal,
         (text) => onUpdate?.({ content: [{ type: "text", text }], details: undefined }),
         getConfig(),
-        parentContext(ctx),
+        parent,
         toolCallId,
       );
       return {
