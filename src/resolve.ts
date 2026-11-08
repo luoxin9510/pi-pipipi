@@ -32,6 +32,7 @@ export interface ChildSpec {
   systemPrompt: string;
   prompt: string;
   model: string;
+  thinking: string;
   maxTurns?: number;
   agentId: string;
   warnings: string[];
@@ -152,6 +153,7 @@ export function resolveChild(
     systemPrompt: system.text,
     prompt: input.prompt,
     model,
+    thinking,
     maxTurns: def.maxTurns,
     agentId,
     warnings: [...tools.warnings, ...system.warnings],

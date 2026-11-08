@@ -46,11 +46,11 @@ const KILL_GRACE_MS = 5000;
 const SETTLE_GRACE_MS = 2000;
 const STDERR_LINES = 30;
 
-function emptyUsage(): Usage {
+export function emptyUsage(): Usage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 }
 
-function addUsage(sum: Usage, u: Usage): void {
+export function addUsage(sum: Usage, u: Usage): void {
   sum.input += u.input;
   sum.output += u.output;
   sum.cacheRead += u.cacheRead;

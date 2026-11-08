@@ -56,25 +56,36 @@ interface Ctx {
   trusted?: boolean;
   persist?: string; // dir for a persisted parent session (enables resume); omitted = in-memory parent
   notes?: string[];
+  sessionId?: string; // reuse a parent session id: loading again with it simulates /reload or resuming the parent
+  pick?: (options: string[]) => string | undefined; // answers ui.select
 }
 
 // The extension against a stub ExtensionAPI; the Agent tool is called directly. piCommand defaults to the pinned pi.
 export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
   const tools: Record<string, any> = {};
+  const commands: Record<string, any> = {};
+  const menus: { title: string; options: string[] }[] = [];
   const handlers: Record<string, Function[]> = {};
   const notes: string[] = c.notes ?? [];
   const pi = {
     on: (event: string, h: Function) => (handlers[event] ??= []).push(h),
     registerTool: (t: any) => (tools[t.name] = t),
+    registerCommand: (name: string, c: any) => (commands[name] = c),
     getSettings: () => ({ pipipi: { piCommand: PI, ...settings } }),
   };
   pipipi(pi as any);
-  const sessionId = `parent-${Math.random().toString(36).slice(2, 8)}`;
+  const sessionId = c.sessionId ?? `parent-${Math.random().toString(36).slice(2, 8)}`;
   const sessionFile = c.persist ? join(c.persist, `${sessionId}.jsonl`) : undefined;
   const ctx = {
     cwd: c.cwd,
     hasUI: true,
-    ui: { notify: (m: string) => notes.push(m) },
+    ui: {
+      notify: (m: string) => notes.push(m),
+      select: async (title: string, options: string[]) => {
+        menus.push({ title, options });
+        return c.pick?.(options);
+      },
+    },
     model: "model" in c ? c.model : { provider: "anthropic", id: "claude-haiku-5-5" },
     thinkingLevel: c.thinkingLevel ?? "off",
     isProjectTrusted: () => c.trusted ?? true,
@@ -87,6 +98,9 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
     tool,
     notes,
     updates,
+    menus,
+    sessionId,
+    command: (name: string, args = "") => commands[name].handler(args, ctx),
     registered: tool !== undefined,
     sessionDir: sessionFile ? join(dirname(sessionFile), "subagents", sessionId) : undefined,
     async run(params: Record<string, unknown>, signal?: AbortSignal) {

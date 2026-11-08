@@ -13,7 +13,7 @@ test("first run stores the session under subagents/<parent id>/, records the age
   const first = await t.result({ subagent_type: "Explore", prompt: "Remember this codeword: PINEAPPLE-42. Reply with the single word OK. Do not call any tool." });
   assert.equal(first.status, "completed", first.error ?? "");
   assert.deepEqual(readdirSync(t.sessionDir!).sort(), [`${first.agentId}.json`, readdirSync(t.sessionDir!).find((f) => f.endsWith(".jsonl"))!].sort());
-  assert.deepEqual(JSON.parse(readFileSync(join(t.sessionDir!, `${first.agentId}.json`), "utf8")), { agentType: "Explore" });
+  assert.equal(JSON.parse(readFileSync(join(t.sessionDir!, `${first.agentId}.json`), "utf8")).agentType, "Explore");
   assert.equal(sessionEntries(t.sessionDir!, first.agentId)[0]!.id, first.agentId, "pi named the session with the agent id");
 
   const second = await t.result({ resume: first.agentId, prompt: "What codeword did I tell you? Reply with only the codeword. Do not call any tool." });

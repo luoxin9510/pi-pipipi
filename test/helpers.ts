@@ -88,6 +88,7 @@ export async function loadTool(settings: Record<string, unknown>, c: FakeCtx) {
   const pi = {
     on: (event: string, h: Function) => (handlers[event] ??= []).push(h),
     registerTool: (t: any) => (tools[t.name] = t),
+    registerCommand: () => {},
     getSettings: () => ({ pipipi: { piCommand: FAKE_PI, ...settings } }),
   };
   pipipi(pi as any);

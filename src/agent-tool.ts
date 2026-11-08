@@ -7,7 +7,8 @@ import type { Config } from "./config.ts";
 import { EFFORTS, inertNotice } from "./definition.ts";
 import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ParentContext, resolveChild } from "./resolve.ts";
-import { storedAgentType, writeAgentMeta } from "./sessions.ts";
+import { registry } from "./registry.ts";
+import { storedAgentType } from "./sessions.ts";
 import { runChild, type RunResult, type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
@@ -92,7 +93,7 @@ export function describeAgents({ agents }: Discovery): string {
   ].join("\n");
 }
 
-function parentContext(ctx: ExtensionContext): ParentContext {
+export function parentContext(ctx: ExtensionContext): ParentContext {
   return {
     model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
     thinking: ctx.thinkingLevel ?? "off",
@@ -138,14 +139,27 @@ async function executeAgent(
 
   await slots.acquire(signal);
   let run: RunResult;
+  const id = spec.agentId;
   try {
-    if (parent.sessionFile && input.resume === undefined) writeAgentMeta(parent, spec.agentId, agentType);
+    registry.begin(parent, { id, type: agentType, description: input.description, model: spec.model, thinking: spec.thinking });
     let last = "";
-    run = await runChild(spec, signal, (p) => {
-      const text = `${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`;
-      if (text !== last) onUpdate?.(text); // a turn's end repeats the update from its last tool start
-      last = text;
-    });
+    try {
+      run = await runChild(
+        spec,
+        signal,
+        (p) => {
+          registry.progress(id, p);
+          const text = `${input.description}: turn ${p.turns}${p.lastTool ? `, ${p.lastTool}` : ""}`;
+          if (text !== last) onUpdate?.(text); // a turn's end repeats the update from its last tool start
+          last = text;
+        },
+        (handle) => registry.attach(id, handle),
+      );
+    } catch (err) {
+      registry.finish(id, "stopped"); // the caller aborted
+      throw err;
+    }
+    registry.finish(id, run.status, run);
   } finally {
     slots.release();
   }
