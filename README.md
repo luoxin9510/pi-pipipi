@@ -42,7 +42,8 @@ Invalid files are skipped with a warning.
 | Field | Handling |
 |---|---|
 | `name`, `description`, body | Same as Claude Code. The body replaces pi's default system prompt. |
-| `tools`, `disallowedTools` | Without `tools` the agent gets your normal pi tools (`defaultTools`) and every installed extension. Otherwise mapped to `--tools` / `--exclude-tools`. `Read→read`, `Write→write`, `Edit→edit`, `Bash→bash`, `Grep→grep`, `Glob→find`, `LS→ls`, `mcp__*` unchanged. A `Bash(...)` deny rule removes the whole tool. Tools with no pi equivalent are dropped with a warning. |
+| `tools`, `disallowedTools` | Without `tools` the agent gets your normal pi tools (`defaultTools`) and every installed extension. Otherwise mapped to `--tools` / `--exclude-tools`. `Read→read`, `Write→write`, `Edit→edit`, `Bash→bash`, `Grep→grep`, `Glob→find`, `LS→ls`, `mcp__*` unchanged. A `tools` list without `mcp__` entries also excludes all MCP tools. A `Bash(...)` deny rule removes the whole tool. Tools with no pi equivalent are dropped with a warning. |
+| `codemode` | `false` keeps this agent on direct tools. Default: children see only the `codemode` tool and call their allowed tools from scripts (the `tools` list still binds inside scripts). |
 | `model` | See [Model selection](#model-selection). |
 | `effort` | `--thinking` |
 | `maxTurns` | The child is stopped after that many turns; the result is `partial`. |
@@ -124,6 +125,7 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
   "defaultModel": "haiku",                         // default "haiku"; "inherit" follows the session model
   "toolMap": { "WebFetch": "mcp__fetch__fetch" },  // merged over the built-in map
   "maxConcurrent": 20,                             // running children per pi process; extra calls queue. The first session's value wins for the process
+  "childCodemode": "only",                         // "only" (default): children see only `codemode`; "inherit": v1 behaviour, direct tools
   "piCommand": "pi"
 }
 ```

@@ -6,6 +6,7 @@ export interface Config {
   toolMap: Record<string, string>;
   maxConcurrent: number;
   piCommand: string;
+  childCodemode: "only" | "inherit";
 }
 
 // Claude Code model aliases -> the same-name Anthropic models. Settings override per alias.
@@ -43,11 +44,17 @@ export function readConfig(raw: unknown): Config {
     throw new Error("pipipi.maxConcurrent must be a positive integer");
   }
 
+  const childCodemode = r.childCodemode ?? "only";
+  if (childCodemode !== "only" && childCodemode !== "inherit") {
+    throw new Error(`pipipi.childCodemode must be "only" or "inherit", got ${JSON.stringify(childCodemode)}`);
+  }
+
   return {
     models: { ...DEFAULT_MODELS, ...stringMap(r.models, "models") },
     defaultModel: optionalString(r.defaultModel, "defaultModel") ?? "haiku",
     toolMap: stringMap(r.toolMap, "toolMap"),
     maxConcurrent: maxConcurrent as number,
     piCommand: optionalString(r.piCommand, "piCommand") ?? "pi",
+    childCodemode,
   };
 }

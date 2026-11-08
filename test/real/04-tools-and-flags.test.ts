@@ -20,13 +20,13 @@ test("Claude names map to pi names; deny first; Bash(...) removes bash; mcp and 
     "tools: Read, Grep, Glob, LS, Bash, WebFetch, mcp__gh__search, Agent, Task, Edit, custom_tool\ndisallowedTools: Bash(git push *), Edit",
   );
   // mcp__gh__search and custom_tool are passed to pi by name; no such tool exists here, so pi activates nothing for them.
-  assert.deepEqual(setup.tools, ["find", "grep", "ls", "read"]);
+  assert.deepEqual(setup.tools, ["codemode", "find", "grep", "ls", "read"]);
   assert.deepEqual(warnings, ['tool "WebFetch" has no pi equivalent'], "Agent and Task are dropped silently");
 });
 
 test("toolMap from settings extends the map", async () => {
   const { setup, warnings } = await runAgent("tools: Read, WebFetch", { toolMap: { WebFetch: "grep" } });
-  assert.deepEqual(setup.tools, ["grep", "read"]);
+  assert.deepEqual(setup.tools, ["codemode", "grep", "read"]);
   assert.deepEqual(warnings, []);
 });
 

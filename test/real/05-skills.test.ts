@@ -36,7 +36,7 @@ test("skills are found in order, recursively, through symlinks, and preloaded af
   assert.match(prompt, /Review carefully\./);
   assert.match(prompt, /Linked skill, matched by folder name\./);
   assert.doesNotMatch(prompt, /Inside another skill/);
-  assert.match(prompt, /\n# Environment\nWorking directory: .*app\nPlatform: \w+\nDate: \d{4}-\d{2}-\d{2}$/);
+  assert.match(prompt, /\n# Environment\nWorking directory: .*app\nPlatform: \w+\nDate: \d{4}-\d{2}-\d{2}\n\nUse the `codemode` tool[^\n]*$/);
   assert.deepEqual(r.warnings, ['skill "inner" not found', 'skill "ghost" not found']);
   assert.equal(r.status, "completed", "missing skills do not stop the run");
 });

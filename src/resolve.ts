@@ -1,5 +1,6 @@
 // Turn a definition + call input + config into the child process spec (spec 5).
 
+import { fileURLToPath } from "node:url";
 import type { Config } from "./config.ts";
 import type { AgentDefinition, Effort } from "./definition.ts";
 import { newAgentId, subagentSessionDir } from "./sessions.ts";
@@ -36,6 +37,10 @@ export interface ChildSpec {
   warnings: string[];
 }
 
+// Registers `codemode` in mode "only"; pi swaps its built-in codemode extension for it.
+const CODEMODE_EXTENSION = fileURLToPath(new URL("./child-codemode.ts", import.meta.url));
+const CODEMODE_PROMPT = "Use the `codemode` tool for all tool calls, and put independent calls in one script.";
+
 const BUILTIN_TOOL_MAP: Record<string, string> = {
   Read: "read", Write: "write", Edit: "edit", Bash: "bash", Grep: "grep", Glob: "find", LS: "ls",
 };
@@ -61,7 +66,7 @@ function mapTool(name: string, toolMap: Record<string, string>): string | undefi
   return undefined;
 }
 
-function resolveTools(def: AgentDefinition, config: Config): { args: string[]; warnings: string[] } {
+function resolveTools(def: AgentDefinition, config: Config, codemode: boolean): { args: string[]; warnings: string[] } {
   const toolMap = { ...BUILTIN_TOOL_MAP, ...config.toolMap };
   const warnings: string[] = [];
 
@@ -82,13 +87,17 @@ function resolveTools(def: AgentDefinition, config: Config): { args: string[]; w
   if (def.tools !== undefined) {
     const allow = map(def.tools).filter((t) => !deny.includes(t));
     if (allow.length === 0) throw new Error(`agent "${def.name}" has no usable tools`);
-    args.push("--tools", allow.join(","));
+    args.push("--tools", (codemode ? ["codemode", ...allow.filter((t) => t !== "codemode")] : allow).join(","));
+    // A --tools list does not drop MCP tools unless an entry starts with mcp__; an agent must not get unlisted ones.
+    if (!allow.some((t) => t.startsWith("mcp__"))) deny.push("mcp__*");
+  } else if (codemode) {
+    args.push("--tools", "+codemode");
   }
   if (deny.length > 0) args.push("--exclude-tools", deny.join(","));
   return { args, warnings };
 }
 
-function buildSystemPrompt(def: AgentDefinition, cwd: string, now: Date): { text: string; warnings: string[] } {
+function buildSystemPrompt(def: AgentDefinition, cwd: string, now: Date, codemode: boolean): { text: string; warnings: string[] } {
   const parts = [def.prompt];
   const warnings: string[] = [];
   for (const name of def.skills ?? []) {
@@ -104,6 +113,7 @@ function buildSystemPrompt(def: AgentDefinition, cwd: string, now: Date): { text
       `Date: ${now.toISOString().slice(0, 10)}`,
     ].join("\n"),
   );
+  if (codemode) parts.push(CODEMODE_PROMPT);
   return { text: parts.join("\n\n"), warnings };
 }
 
@@ -115,8 +125,9 @@ export function resolveChild(
 ): ChildSpec {
   const model = resolveModel(input, def, config, parent);
   const thinking = input.effort ?? def.effort ?? parent.thinking;
-  const tools = resolveTools(def, config);
-  const system = buildSystemPrompt(def, parent.cwd, new Date());
+  const codemode = config.childCodemode === "only" && def.codemode !== false;
+  const tools = resolveTools(def, config, codemode);
+  const system = buildSystemPrompt(def, parent.cwd, new Date(), codemode);
 
   // A resume id was already checked by storedAgentType().
   const agentId = input.resume ?? newAgentId();
@@ -126,6 +137,7 @@ export function resolveChild(
     "--mode", "json", "-p",
     "--model", model,
     "--thinking", thinking,
+    ...(codemode ? ["-e", CODEMODE_EXTENSION] : []),
     ...tools.args,
     ...(def.omitClaudeMd ? ["--no-context-files"] : []),
     parent.trusted ? "--approve" : "--no-approve",

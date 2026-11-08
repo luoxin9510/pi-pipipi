@@ -85,6 +85,7 @@ test("every skip reason is reported at session start, naming the file", async ()
     ["effort", "---\nname: a\ndescription: d\neffort: huge\n---\n", /"effort" must be low/],
     ["tools", "---\nname: a\ndescription: d\ntools: 3\n---\n", /"tools" must be/],
     ["omit", "---\nname: a\ndescription: d\nomitClaudeMd: maybe\n---\n", /"omitClaudeMd" must be true or false/],
+    ["codemode", "---\nname: a\ndescription: d\ncodemode: no\n---\n", /"codemode" must be true or false/],
     ["model", "---\nname: a\ndescription: d\nmodel: 7\n---\n", /"model" must be a string/],
     ["skills", "---\nname: a\ndescription: d\nskills: {x: 1}\n---\n", /"skills" must be/],
   ];
@@ -133,14 +134,14 @@ test("every supported field of a Claude Code file reaches the child; comma and l
   ]);
   assert.equal(full.status, "completed", full.error ?? "");
   const f = childSetup(t.sessionDir!, full.agentId);
-  assert.deepEqual(f.tools, ["find", "read"], "tools list minus disallowedTools");
+  assert.deepEqual(f.tools, ["codemode", "find", "read"], "tools list minus disallowedTools");
   assert.equal(f.model, "anthropic/claude-haiku-5-5");
   assert.equal(f.thinking, "high");
   assert.equal(f.hasContextFiles, false, "omitClaudeMd");
   assert.match(f.prompt, /^Body line 1\nBody line 2\n\n# Environment/);
   assert.equal(listed.status, "completed", listed.error ?? "");
   const l = childSetup(t.sessionDir!, listed.agentId);
-  assert.deepEqual(l.tools, ["bash", "read"]);
+  assert.deepEqual(l.tools, ["bash", "codemode", "read"]);
   assert.equal(l.hasContextFiles, true, "context files are kept by default");
 });
 
@@ -169,7 +170,7 @@ When invoked:
   assert.equal(r.status, "completed", r.error ?? "");
   assert.deepEqual(r.warnings, []);
   const c = childSetup(t.sessionDir!, r.agentId);
-  assert.deepEqual(c.tools, ["bash", "find", "grep", "read"]);
+  assert.deepEqual(c.tools, ["bash", "codemode", "find", "grep", "read"]);
   assert.match(c.prompt, /^You are a senior code reviewer/);
 });
 

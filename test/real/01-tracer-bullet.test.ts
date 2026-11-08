@@ -35,7 +35,7 @@ test("a default call runs general-purpose, reads a file and returns a completed 
   assert.equal(res.isError, false);
   assert.match(res.content[0].text, /^general-purpose completed \(agentId [a-z0-9]{12}, \d+ turns, [\d.]+s\)\n\n/);
   assert.ok(t.updates.some((u) => u.endsWith(", read")), `progress names the tool: ${t.updates}`);
-  assert.ok(toolCalls(sessionEntries(t.sessionDir!, r.agentId)).includes("read"));
+  assert.ok(toolCalls(sessionEntries(t.sessionDir!, r.agentId)).includes("codemode"), "children are codemode-only by default: read is called from a script");
   const sessionCost = sessionEntries(t.sessionDir!, r.agentId)
     .filter((e) => e.type === "message" && e.message.role === "assistant")
     .reduce((sum, e) => sum + e.message.usage.cost.total, 0);

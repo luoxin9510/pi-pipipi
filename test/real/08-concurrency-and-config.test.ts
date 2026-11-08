@@ -61,6 +61,8 @@ test("wrong config types throw naming the key", async () => {
     [{ toolMap: { WebFetch: false } }, /pipipi\.toolMap\.WebFetch must be a string/],
     [{ defaultModel: "" }, /pipipi\.defaultModel must be a non-empty string/],
     [{ piCommand: 3 }, /pipipi\.piCommand must be a non-empty string/],
+    [{ childCodemode: "yes" }, /pipipi\.childCodemode must be "only" or "inherit"/],
+    [{ childCodemode: true }, /pipipi\.childCodemode must be "only" or "inherit"/],
   ];
   for (const [settings, error] of cases) await assert.rejects(loadTool(settings, { cwd: s.repo }), error);
 });
