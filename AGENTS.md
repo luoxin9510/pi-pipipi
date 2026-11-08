@@ -19,6 +19,8 @@ subprocesses. Design: `.scratch/pi-pipipi/decisions.md` and `spec.md`. Tickets: 
 - `src/builtin/*.md` built-in agents in Claude Code format.
 - `test/real/*.test.ts` node:test against real pi and real haiku; `test/faults/*.test.ts` scripted faults on fake pi.
   `npm test` runs both (Node >= 22.18 strips types).
+- `test/panel/*.test.ts` panel rows and focus rules against the registry (no pi, no model). `test/tui/*.test.ts` drive real
+  interactive pi in a pty (`test/tui/harness.ts`: node-pty + headless xterm); real haiku, few and time-bounded.
 - `test/fake-pi.mjs` stands in for the `pi` binary in the fault suite (and `npm run stress -- --fake`).
 - `evals/` real-model evals, `stress/` concurrency test. Dev scripts, not shipped.
 

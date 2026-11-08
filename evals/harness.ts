@@ -78,7 +78,7 @@ export async function directTool(cwd: string, signal: AbortSignal, options: Dire
   const ctx = {
     cwd,
     hasUI: true,
-    ui: { notify: (m: string) => warnings.push(m) },
+    ui: { notify: (m: string) => warnings.push(m), setWidget: () => {}, onTerminalInput: () => () => {} },
     model: options.parentModel ?? { provider: "anthropic", id: "claude-haiku-5-5" },
     thinkingLevel: "low",
     isProjectTrusted: () => true,

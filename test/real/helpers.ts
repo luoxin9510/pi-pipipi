@@ -81,6 +81,8 @@ export async function loadTool(settings: Record<string, unknown>, c: Ctx) {
     hasUI: true,
     ui: {
       notify: (m: string) => notes.push(m),
+      setWidget: () => {},
+      onTerminalInput: () => () => {},
       select: async (title: string, options: string[]) => {
         menus.push({ title, options });
         return c.pick?.(options);
