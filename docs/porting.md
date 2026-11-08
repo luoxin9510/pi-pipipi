@@ -192,6 +192,7 @@ Only needed for the panel and the subagent screen.
 | `ctx.ui.select`, `ctx.ui.confirm`, `ctx.ui.notify`, `ctx.cwd` | `/subagents`, `/subagents worktrees` (the confirm names what removal loses), notices | |
 | pi components `AssistantMessageComponent`, `UserMessageComponent`, `ToolExecutionComponent`, `getMarkdownTheme`; pi-tui `Input`, `Text`, the `TUI`, `Component` and `Focusable` types, `matchesKey`, `isKeyRelease`, `truncateToWidth` | the transcript, the screen, the panel | |
 | `theme.fg/bg/bold`; colour names `accent`, `success`, `error`, `warning`, `muted`, `dim`, `toolTitle`, `selectedBg` | panel and screen | a theme must define them (pi's built-in themes do) |
+| raw 256-colour SGR escapes `\x1b[38;5;<n>m` ... `\x1b[39m` (palette in `src/color.ts`) | agent `color`: panel row label and screen header | the host's TUI must pass SGR through; without it the label shows escape text, so drop the `color` field |
 
 ### Without pi's TUI
 

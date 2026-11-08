@@ -213,7 +213,7 @@ focus back to the editor. In an in-memory session (`pi --no-session`) the panel 
 subagents cannot be viewed.
 
 `/subagents` lists every subagent of the session, newest first, including finished ones, ones from before a `/reload`
-and ones from a resumed parent session, each with its model and effort. Pick one to open its screen, whose header also shows the model and effort. `/subagents stop` stops every running subagent and background script of the session (the notice counts them; with nothing running it says so), from anywhere.
+and ones from a resumed parent session, each with its model and effort. Pick one to open its screen, whose header also shows the model and effort. `/subagents stop` stops every running subagent and background script of the session (the notice counts them; with nothing running it says so), from anywhere. `/subagents worktrees` manages the worktrees kept by isolated agents (see [Worktree isolation](#worktree-isolation)). Any other argument warns.
 
 ### The subagent screen
 
@@ -336,7 +336,7 @@ Optional, in `.pi/settings.json` or `~/.pi/agent/settings.json`:
 
 ```bash
 npm install
-npm test            # real suite (test/real) + fault suite (test/faults)
+npm test            # all seven suites below
 npm run test:real   # only the real suite
 npm run test:faults # only the fault suite: scripted fake pi (test/fake-pi.mjs), no model, free
 npm run test:memory   # memory prompt, tools and directories on fake pi: no model, free
@@ -347,7 +347,7 @@ npm run test:tui    # drives real interactive pi in a pty (node-pty + headless x
 npm run typecheck
 ```
 
-`npm test` runs all five suites (`test/real`, `test/faults`, `test/panel`, `test/tui`, `test/parent`). The `test/tui` tests start the
+`npm test` runs all seven suites (`test/real`, `test/faults`, `test/panel`, `test/tui`, `test/parent`, `test/worktree`, `test/memory`). The `test/tui` tests start the
 real `pi` with this checkout loaded and read its screen, so they are slow (about 25 to 30 s each) and each costs about a
 cent. Never run `npm test` from inside a test.
 
@@ -355,8 +355,8 @@ The real suite drives the Agent tool in-process with real children: the pinned p
 real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 146 tests (70 real, 35
-fault, 19 panel, 11 tui, 11 parent) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
+read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 204 tests (77 real, 35
+fault, 24 panel, 13 tui, 12 parent, 32 worktree, 11 memory) in 1 to 2 min wall (it depends on the API), files in parallel. The in-process real suite costs about $0.02 per run
 (measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
 `usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
@@ -386,9 +386,9 @@ npm run eval -- --runs 3           # repeat, for pass rates
 npm run eval -- --only resume      # cases whose name contains "resume"
 ```
 
-`evals/cases.ts` holds 15 cases. Twelve call the tool in-process with real `pi` children (listing, read-only agents
+`evals/cases.ts` holds 17 cases. Fourteen call the tool in-process with real `pi` children (listing, read-only agents
 cannot write, custom agent tools, resume, `maxTurns`, skills, context files vs `omitClaudeMd`, model aliases, a bad
-model, no nesting, parallel runs, and a steer that changes a running subagent's course, sent through the registry handle and graded by an exact token and a file that must not appear). Three start a real parent `pi` on haiku with codemode and this checkout
+model, no nesting, parallel runs, a steer that changes a running subagent's course, sent through the registry handle and graded by an exact token and a file that must not appear, worktree isolation, and agent memory). The isolation case runs on a temp git repository: an isolated agent that writes a file keeps its worktree (the result has path, branch and the changed file, the file is in the worktree, the main checkout is clean), and an isolated read-only agent leaves no worktree or branch. The memory case uses `memory: project` in a temp repository (never `~/.claude`): run 1 saves a fact to `MEMORY.md`, and a fresh run 2 (no `resume`) answers from it. Three start a real parent `pi` on haiku with codemode and this checkout
 (`--no-extensions -e builtin:codemode -e ./src/index.ts`): one with a given script and one where the model decides to
 delegate (both pass `run_in_background: false`, since print mode would exit before a background result arrived), and one
 background case that runs a long-lived `pi --mode rpc` parent: the script's `codemode` call must return "moved to the
@@ -398,7 +398,7 @@ your settings say, and every case checks that every result (or, for the parent c
 parent and its children) ran on haiku. A case running over 5 minutes is aborted and its children stopped. Results go
 to `evals/results/` (ignored by git).
 
-Children are `pi --mode rpc` and codemode-only by default. Last run (pi 1.5.0, v3a, `--runs 3`): 45/45 over all 15 cases, $0.029 in all, 80 s wall; the background case 3/3 at $0.001 and about 14 s per run. Earlier (v2): 39/39 over 3 runs for the 13 original cases, $0.027 in all; the steer case passed 11/13 over two batches (the miss: haiku batched both steps into one codemode script, so there was nothing left to steer; $0.0005 per run). The first version of the suite found a bug that the fake-pi
+Children are `pi --mode rpc` and codemode-only by default. Last run (pi 1.5.0, v3b, `--runs 3`): 51/51 over all 17 cases, $0.037 in all, 94 s wall; the background case 3/3 at $0.001 and about 14 s per run, the isolation case 3/3 at $0.0008 and about 11 s, the memory case 3/3 at $0.0011 and about 12 s. Earlier (v2): 39/39 over 3 runs for the 13 original cases, $0.027 in all; the steer case passed 11/13 over two batches (the miss: haiku batched both steps into one codemode script, so there was nothing left to steer; $0.0005 per run). The first version of the suite found a bug that the fake-pi
 tests had missed (a run could go past `maxTurns` and still be reported `completed`), fixed since. Two checks depend on
 the model or on timing and could fail without a bug: `maxTurns` needs haiku to call a tool on its first turn, and the
 parallel case needs wall time under 0.7 × the summed run times.

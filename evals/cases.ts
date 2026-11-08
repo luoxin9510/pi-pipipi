@@ -1,9 +1,22 @@
 // The eval cases. Each builds its own fixture, so cases can run in parallel and repeat.
 
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { registry } from "../src/registry.ts";
 import { check, childAgents, costOf, directTool, type EvalCase, fixture, HAIKU, messageText, onHaiku, parentOnHaiku, runParent, runRpcParent } from "./harness.ts";
+
+// A temp repository with one commit holding the given files (real git, unlike `fixture`'s bare .git directory).
+function gitFixture(files: Record<string, string>): string {
+  const dir = realpathSync(fixture(files));
+  rmSync(join(dir, ".git"), { recursive: true });
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=eval", "-c", "user.email=eval@example.com", ...a], { cwd: dir, stdio: "ignore" });
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-q", "-m", "init");
+  return dir;
+}
+const gitOut = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
 
 const agent = (fields: string, body: string) => `---\n${fields}\n---\n${body}\n`;
 
@@ -358,6 +371,62 @@ return "TOK-" + (6 * 7) + " " + r.status;`;
           check("the message started a new turn", !!message && !!settled && ev.slice(0, ev.indexOf(message)).some((e) => e.type === "agent_start" && e.at > settled.at), ev.map((e) => e.type)),
           check("main's final answer uses the result", !!answer && !!message && answer.at > message.at, answer && messageText(answer.message)),
           parentOnHaiku(r.models),
+        ],
+      };
+    },
+  },
+  {
+    name: "isolated agent keeps a worktree only when it changes files",
+    kind: "direct",
+    async run(signal) {
+      const cwd = gitFixture({
+        "README.md": "hello\n",
+        ".claude/agents/scribe.md": agent("name: scribe\ndescription: Writes files\ntools: Write, Read\nisolation: worktree", "You do exactly what is asked, then reply DONE."),
+      });
+      const t = await directTool(cwd, signal);
+      const w = await t.call({ prompt: "Write the file notes.txt with exactly this content: isolated-ok", subagent_type: "scribe" });
+      const ro = await t.call({ prompt: "Read README.md and reply with its content. Do not write anything.", subagent_type: "scribe" });
+      const wt = w.worktree as { changed: boolean; path?: string; branch?: string; files?: string[] } | undefined;
+      const branches = gitOut(cwd, "branch", "--list", "pipipi/*");
+      const kept = existsSync(join(cwd, ".pi", "worktrees")) ? readdirSync(join(cwd, ".pi", "worktrees")) : [];
+      return {
+        cost: costOf(w, ro),
+        checks: [
+          check("both completed", w.status === "completed" && ro.status === "completed", [w.error, ro.error]),
+          check("writer: worktree kept with path, branch and files", !!wt?.changed && !!wt.path && !!wt.branch && !!wt.files?.includes("notes.txt"), wt),
+          check("writer: file is in the worktree", !!wt?.path && existsSync(join(wt.path, "notes.txt")), wt),
+          check("main checkout untouched", !existsSync(join(cwd, "notes.txt")) && gitOut(cwd, "status", "--porcelain") === ""),
+          check("read-only: nothing kept", ro.worktree?.changed === false, ro.worktree),
+          check("only the writer's worktree and branch remain", kept.length === 1 && kept[0] === w.agentId && branches.includes(`pipipi/${w.agentId}`) && !branches.includes(`pipipi/${ro.agentId}`), { kept, branches }),
+          onHaiku(w, ro),
+        ],
+      };
+    },
+  },
+  {
+    name: "agent memory carries a fact across runs",
+    kind: "direct",
+    async run(signal) {
+      const cwd = gitFixture({
+        ".claude/agents/keeper.md": agent(
+          "name: keeper\ndescription: Remembers facts\nmemory: project",
+          "You keep facts the user tells you in your persistent memory and answer questions from it.",
+        ),
+      });
+      const t = await directTool(cwd, signal);
+      const a = await t.call({ prompt: "Remember this for later: the deploy password is PELICAN-77. Save it in your memory, then reply SAVED.", subagent_type: "keeper" });
+      const file = join(cwd, ".claude", "agent-memory", "keeper", "MEMORY.md");
+      const saved = existsSync(file) ? readFileSync(file, "utf8") : "";
+      // A fresh run (no resume): it can only know the fact from its memory.
+      const b = await t.call({ prompt: "What is the deploy password? Reply with it only.", subagent_type: "keeper" });
+      return {
+        cost: costOf(a, b),
+        checks: [
+          check("both completed", a.status === "completed" && b.status === "completed", [a.error, b.error]),
+          check("run 1 wrote MEMORY.md with the fact", saved.includes("PELICAN-77"), saved),
+          check("run 2 is a different agent", a.agentId !== b.agentId),
+          check("run 2 answers from memory", b.output.includes("PELICAN-77"), b.output),
+          onHaiku(a, b),
         ],
       };
     },
