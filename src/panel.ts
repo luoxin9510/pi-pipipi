@@ -5,6 +5,7 @@
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { registry, type SubagentRecord } from "./registry.ts";
+import { openSubagentScreen } from "./subagent-screen.ts";
 
 // Finished rows drop out this long after they ended. PIPIPI_PANEL_LINGER_MS shortens it; it exists for the pty tests.
 export const LINGER_MS = 30_000;
@@ -137,9 +138,10 @@ export function installPanel(ctx: ExtensionContext): void {
         const f = (tui as unknown as { focusedComponent?: { getText?: unknown } }).focusedComponent;
         return f === undefined || typeof f.getText === "function";
       };
-      panel = new Panel(sessionId, theme, () => tui.requestRender(), (r) =>
-        ctx.ui.notify(`pi-pipipi: opening ${describe(r)} is not available yet`, "info"),
-      );
+      panel = new Panel(sessionId, theme, () => tui.requestRender(), (r) => {
+        if (!ctx.sessionManager.getSessionFile()) ctx.ui.notify("pi-pipipi: subagents of an in-memory session cannot be viewed (the session is not saved)", "info");
+        else void openSubagentScreen(ctx, r);
+      });
       return panel;
     },
     { placement: "belowEditor" },

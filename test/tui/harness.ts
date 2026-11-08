@@ -19,7 +19,7 @@ for (const dir of readdirSync(join(ROOT, "node_modules", "node-pty", "prebuilds"
   if (dir.isDirectory() && existsSync(helper)) chmodSync(helper, 0o755);
 }
 
-export const KEYS = { up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D", enter: "\r", esc: "\x1b", ctrlC: "\x03" } as const;
+export const KEYS = { up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D", enter: "\r", esc: "\x1b", ctrlC: "\x03", pageUp: "\x1b[5~", pageDown: "\x1b[6~", home: "\x1b[H", end: "\x1b[F" } as const;
 
 export interface PiOptions {
   cols?: number;

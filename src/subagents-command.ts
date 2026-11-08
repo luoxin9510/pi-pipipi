@@ -1,7 +1,8 @@
-// `/subagents`: pick one of the session's subagents, newest first. Opening one comes with the subagent screen.
+// `/subagents`: pick one of the session's subagents, newest first. Opening one shows the subagent screen.
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { registry, type SubagentRecord } from "./registry.ts";
+import { openSubagentScreen } from "./subagent-screen.ts";
 
 function label(r: SubagentRecord): string {
   const what = r.description ? `${r.type}(${r.description})` : r.type;
@@ -18,5 +19,5 @@ export async function subagentsCommand(ctx: ExtensionCommandContext): Promise<vo
   const choice = await ctx.ui.select("Subagents", labels);
   if (choice === undefined) return;
   const picked = rows[labels.indexOf(choice)]!;
-  ctx.ui.notify(`pi-pipipi: opening ${picked.type} ${picked.id} is not available yet`, "info");
+  void openSubagentScreen(ctx, picked); // not awaited: the command ends, the screen stays until the user leaves
 }

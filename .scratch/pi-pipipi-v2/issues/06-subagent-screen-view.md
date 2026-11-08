@@ -4,9 +4,13 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** closed (done 2026-11-08)
 
-- [ ] Opening a running subagent while main runs shows its transcript growing; main's run is not interrupted (pty test)
-- [ ] Opening a finished subagent shows its full transcript from the session file
-- [ ] Scrolling reaches earlier turns
-- [ ] `/main` and the `main` row return to main; other slash commands say they are not available here
+- [x] Opening a running subagent while main runs shows its transcript growing; main's run is not interrupted (pty test)
+- [x] Opening a finished subagent shows its full transcript from the session file
+- [x] Scrolling reaches earlier turns
+- [x] `/main` and the `main` row return to main; other slash commands say they are not available here
+
+## Comments
+
+2026-11-08: done. `src/subagent-screen.ts`: `openSubagentScreen(ctx, record)` mounts `SubagentScreen` with `ctx.ui.custom(..., { overlay: true, overlayOptions: { width: "100%", maxHeight: "100%", anchor: "top-left" } })`; the component renders exactly `tui.terminal.rows` lines, so it covers the terminal while main's TUI and run continue underneath (no switchSession). Leaving: Esc or `/main` calls `done()`. There is no separate `main` row (the panel is covered by the overlay); Esc plus `/main` is the back affordance. Main state: `ctx.isIdle()` of the session_start context, re-read on every render (a 300 ms timer re-renders). Live transcript: each render stats the child's `<sessionDir>/<ts>_<id>.jsonl` and, when size/mtime changed, re-parses it (`parseSessionEntries` + `buildSessionContext`) into pi's UserMessageComponent / AssistantMessageComponent / ToolExecutionComponent (expanded). Tool calls use a small own `renderCall` (name + args, strings raw) because pi's registered renderers are not reachable and its default prints a codemode script as one JSON line. Session file is written per finished message, so growth is per message, not per token. Scroll: PgUp/PgDn, Up/Down, Home/End (Up/Down always scroll; the input line is single line). Input line: `/main` leaves, other `/x` shows a notice, plain text shows "not available yet" (ticket 07 replaces it). Tests: test/panel/screen.test.ts (3, fast), test/tui/06-screen.test.ts (2, pty, haiku, ~26 s).
