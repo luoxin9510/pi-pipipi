@@ -53,6 +53,7 @@ export function fixture(files: Record<string, string> = {}): string {
 export interface DirectTool {
   call(params: Record<string, unknown>): Promise<AgentResult>;
   sessionDir: string;
+  sessionId: string; // the parent session id: registry.list(sessionId) shows its subagents
   warnings: string[];
 }
 
@@ -70,6 +71,8 @@ export async function directTool(cwd: string, signal: AbortSignal, options: Dire
   const api = {
     on: (event: string, h: Function) => (handlers[event] ??= []).push(h),
     registerTool: (t: { name: string; execute: Function }) => (tools[t.name] = t),
+    registerCommand: () => {},
+    sendMessage: () => {},
     getSettings: () => ({ pipipi: { ...PINNED.pipipi, ...options.settings } }),
   };
   pipipi(api as unknown as Parameters<typeof pipipi>[0]);
@@ -78,6 +81,7 @@ export async function directTool(cwd: string, signal: AbortSignal, options: Dire
   const ctx = {
     cwd,
     hasUI: true,
+    isIdle: () => true,
     ui: { notify: (m: string) => warnings.push(m), setWidget: () => {}, onTerminalInput: () => () => {}, custom: async () => {} },
     model: options.parentModel ?? { provider: "anthropic", id: "claude-haiku-5-5" },
     thinkingLevel: "low",
@@ -89,6 +93,7 @@ export async function directTool(cwd: string, signal: AbortSignal, options: Dire
   if (!tool) throw new Error("Agent tool was not registered");
   return {
     sessionDir,
+    sessionId,
     warnings,
     call: async (params) => {
       const r = await tool.execute("eval", { description: "eval task", ...params }, signal, undefined, ctx);

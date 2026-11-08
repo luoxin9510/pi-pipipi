@@ -32,7 +32,8 @@
     "test:faults": "node --test --experimental-strip-types 'test/faults/*.test.ts'",
     "typecheck": "tsc -p .",
     "eval": "node --experimental-strip-types evals/run.ts",
-    "stress": "node --experimental-strip-types stress/stress.ts"
+    "compare": "node --experimental-strip-types evals/compare.ts",
+    "stress":"node --experimental-strip-types stress/stress.ts"
   },
   "dependencies": {
     "yaml": "^2.9.0"
