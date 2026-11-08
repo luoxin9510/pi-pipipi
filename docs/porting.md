@@ -112,7 +112,8 @@ with `execFile`, never through a shell, and serialised per repository (git's own
 | `git worktree add -q -b pipipi/<id> <root>/.pi/worktrees/<id> <base>` | create |
 | `git ls-files --others --ignored --exclude-from=.worktreeinclude -z`, `git check-ignore -z --stdin` | `.worktreeinclude`: pattern match, then keep only gitignored files |
 | `git status --porcelain -z --untracked-files=all`, `git rev-parse HEAD`, `git diff --name-only -z <base> HEAD`, `git log --format=%h\ %s <base>..HEAD` | changed or not, and what changed, after the child has exited |
-| `git worktree remove --force <path>`, `git branch -D pipipi/<id>` | remove an unchanged worktree |
+| `git worktree remove --force <path>`, `git branch -D pipipi/<id>` | remove an unchanged worktree; also `/subagents worktrees` removal of a picked one |
+| `git worktree list --porcelain`, `git merge-base <worktree HEAD> <main HEAD>` | `/subagents worktrees`: the `pipipi/*` entries after the first (the main checkout), and the fork point used as the base for the change summary |
 
 Verified on git 2.54: `worktree add` works from a repository that is itself a linked worktree; with no commits `HEAD` does
 not resolve (`fatal: invalid reference: HEAD`); the exclude path from `--git-path` is the shared one in a linked worktree.
@@ -188,7 +189,7 @@ Only needed for the panel and the subagent screen.
 | `tui.focusedComponent` (not public API) | the panel acts only while the editor (a component with `getText`) has focus | if your TUI renames it, the panel may steal keys from pickers: fix `focusedIsEditor` in `src/panel.ts` |
 | `ctx.ui.getEditorText()` | ↓ only on an empty editor; ctrl+b moves foreground scripts to the background only when the editor is empty | |
 | `ctx.ui.custom(factory, { overlay: true, overlayOptions })`, full width and height; `tui.terminal.rows` | the subagent screen (it draws exactly the terminal's rows; its commands: `/main`, `/model`, `/stop`) | must not stop main's run; pi's `switchSession` would, so it is not used. The screen is `Focusable` and gets keys through `handleInput` (pi filters key releases for components) |
-| `ctx.ui.select`, `ctx.ui.notify` | `/subagents`, notices | |
+| `ctx.ui.select`, `ctx.ui.confirm`, `ctx.ui.notify`, `ctx.cwd` | `/subagents`, `/subagents worktrees` (the confirm names what removal loses), notices | |
 | pi components `AssistantMessageComponent`, `UserMessageComponent`, `ToolExecutionComponent`, `getMarkdownTheme`; pi-tui `Input`, `Text`, the `TUI`, `Component` and `Focusable` types, `matchesKey`, `isKeyRelease`, `truncateToWidth` | the transcript, the screen, the panel | |
 | `theme.fg/bg/bold`; colour names `accent`, `success`, `error`, `warning`, `muted`, `dim`, `toolTitle`, `selectedBg` | panel and screen | a theme must define them (pi's built-in themes do) |
 

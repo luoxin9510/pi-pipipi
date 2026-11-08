@@ -158,3 +158,38 @@ export function settleWorktree(ref: WorktreeRef): Promise<WorktreeOutcome> {
 export function removeWorktree(ref: WorktreeRef): Promise<void> {
   return locked(ref.root, () => remove(ref));
 }
+
+// A kept worktree as `/subagents worktrees` shows it.
+export interface WorktreeInfo {
+  agentId: string;
+  ref: WorktreeRef; // base = the commit the branch forked from main's HEAD
+  outcome: WorktreeOutcome; // changed: false = nothing in it yet
+}
+
+// The `pipipi/*` worktrees of the main checkout that `cwd` belongs to (also when `cwd` is inside one of them), from
+// `git worktree list --porcelain`. Outside a repository: none.
+export async function listWorktrees(cwd: string): Promise<WorktreeInfo[]> {
+  let out: string;
+  try {
+    out = await git(cwd, ["worktree", "list", "--porcelain"]);
+  } catch (err) {
+    if ((err as Error).message.includes("not installed")) throw err;
+    return [];
+  }
+  const entries = out.split("\n\n").map((block) => {
+    const field = (name: string) => block.split("\n").find((l) => l.startsWith(`${name} `))?.slice(name.length + 1);
+    return { path: field("worktree"), branch: field("branch")?.replace(/^refs\/heads\//, "") };
+  });
+  const root = entries[0]?.path;
+  if (root === undefined) return [];
+  const mainHead = await gitLine(root, ["rev-parse", "HEAD"]).catch(() => undefined);
+  const found: WorktreeInfo[] = [];
+  for (const { path, branch } of entries.slice(1)) {
+    if (path === undefined || branch === undefined || !branch.startsWith("pipipi/") || !existsSync(path)) continue;
+    const head = await gitLine(path, ["rev-parse", "HEAD"]);
+    const base = mainHead === undefined ? head : await gitLine(path, ["merge-base", head, mainHead]).catch(() => head);
+    const ref: WorktreeRef = { root, path, branch, base };
+    found.push({ agentId: branch.slice("pipipi/".length), ref, outcome: await inspect(ref) });
+  }
+  return found;
+}

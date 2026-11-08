@@ -144,6 +144,10 @@ on its own branch, so it can edit freely without touching your checkout or other
   path and branch from the current `HEAD`. If you removed a changed one but its branch remains, the call throws naming
   the path. The `isolation` of a resume call is ignored with a warning: the agent keeps how it was started.
 - A `run_in_background: true` agent that keeps a worktree reports it in its end message.
+- `/subagents worktrees` lists the kept `pipipi/*` worktrees of the current checkout (agent id, branch, files changed, commits,
+  path) and removes the ones you pick. Before removing it asks to confirm and names what would be lost (the changed files
+  and the commits on the branch). Removal deletes the worktree and its branch. It only looks at the checkout of the current
+  directory, not at other repositories.
 
 ## Agent memory
 

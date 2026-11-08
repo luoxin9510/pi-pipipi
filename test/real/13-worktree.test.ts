@@ -78,3 +78,29 @@ test("a stopped isolated run follows the same rule: changed is kept, unchanged i
     }
   }
 });
+
+test("resume runs in the same worktree: the file written before is read back and a second is added; the unchanged case recreates it", async () => {
+  const { s, repo } = setup("isolation: worktree");
+  const t = await loadTool({}, { cwd: s.repo, persist: join(s.root, "sessions") });
+  const first = await t.result({ subagent_type: "x", prompt: WRITE });
+  assert.equal(first.status, "completed", first.error ?? "");
+  const path = join(repo, ".pi/worktrees", first.agentId);
+  const second = await t.result({
+    resume: first.agentId,
+    isolation: "worktree",
+    prompt: "Read the file x.txt in the current directory. Then create a file y.txt in the current directory containing exactly the contents of x.txt. Then reply with the single word DONE.",
+  });
+  assert.equal(second.status, "completed", second.error ?? "");
+  assert.equal(readFileSync(join(path, "y.txt"), "utf8").trim(), "hello");
+  assert.deepEqual([...(second.worktree?.files ?? [])].sort(), ["x.txt", "y.txt"]);
+  assert.equal(existsSync(join(repo, "y.txt")), false);
+
+  // an agent that changed nothing has no worktree after its run; a resume recreates it at the same path and branch
+  const idle = await t.result({ subagent_type: "x", prompt: "Reply with the single word OK. Do not call any tool.", isolation: "worktree" });
+  const idlePath = join(repo, ".pi/worktrees", idle.agentId);
+  assert.equal(existsSync(idlePath), false);
+  const back = await t.result({ resume: idle.agentId, prompt: "Run `pwd` in bash and reply with its output only.", isolation: "worktree" });
+  assert.equal(back.status, "completed", back.error ?? "");
+  assert.match(back.output, new RegExp(idle.agentId));
+  assert.ok(back.warnings.some((w: string) => w.includes("isolation")), "isolation on a resume is ignored with a warning");
+});
