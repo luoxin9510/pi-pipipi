@@ -7,10 +7,10 @@ import { agentFile } from "../helpers.ts";
 const parse = (fields: string) => parseDefinition("x.md", agentFile(`name: x\ndescription: d\n${fields}`));
 
 test("isolation: worktree is parsed and is no longer an inert field", () => {
-  const r = parse("isolation: worktree\ncolor: blue");
+  const r = parse("isolation: worktree\nhooks: {}");
   assert.ok(r.ok);
   assert.equal(r.def.isolation, "worktree");
-  assert.deepEqual(r.def.inert, ["color"]);
+  assert.deepEqual(r.def.inert, ["hooks"]);
 });
 
 test("without isolation the definition has none; any other value skips the file naming the field", () => {
