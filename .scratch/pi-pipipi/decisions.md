@@ -142,3 +142,44 @@ Children:
 15. A `tools` list without `mcp__` entries also passes `--exclude-tools mcp__*`.
 
 Process: one v2 spec, then the Matt Pocock flow (to-spec → to-tickets → implement → code-review → pr).
+
+## Grill 4 (2026-11-08): v3 — background work; worktrees, memory, polish
+
+Facts that shaped it: a codemode call blocks main's turn until its script ends, so `await tools.Agent` keeps main busy.
+A prototype (a pi-pipipi codemode tool wrapping pi's own via `createCodemodeExtension`, returning early) showed that a
+script keeps calling tools after its codemode call has returned and main's turn has ended, and that a
+`sendMessage(..., { triggerTurn: true })` wakes an idle main with the result. `ctrl+b` is pi's editor cursor-left.
+
+v3a — background (first):
+1. Like Claude Code, delegating does not block main by default: when a codemode script starts an `Agent` call, the
+   whole script moves to the background. The codemode call returns at once ("moved to the background, id S…"); main's
+   turn can end; the script keeps running and still awaits its agents' results.
+2. `run_in_background` on an `Agent` call: omitted → rule 1; `false` → this script stays in the foreground (main waits);
+   `true` → this agent does not block the script either (the call returns `running`; the agent reports on its own).
+3. A script without agents runs in the foreground; ctrl+b moves it to the background, but only while a foreground
+   script runs and the editor is empty (otherwise ctrl+b stays cursor-left).
+4. When a background script (or a `true` agent) ends, main gets a message: the script's return value (over 8 KB:
+   truncated, full text in a file whose path is given), the agents it ran (id, status, cost), or its error. Main idle:
+   it starts a turn. Main running: delivered as steer.
+5. The panel shows each background script as a row with its agents indented below; `x` on a script row stops the
+   script and its agents.
+6. Several background scripts may run at once; agents still share `maxConcurrent`.
+7. Session end or `/reload` stops everything in the background (stopped, resumable).
+8. pi-pipipi replaces main's built-in codemode with a wrapper around pi's own (the user's codemode settings still
+   apply). `pipipi.backgroundScripts: false` turns this off (v2 behaviour). The porting guide covers it.
+9. No `AgentWait` tool.
+
+v3b — later:
+10. Worktree isolation (`isolation: "worktree"` in the call or the agent file, the call wins): local repos are fine;
+    not a git repo → caller error. `<repo>/.pi/worktrees/<agentId>`, branch `pipipi/<agentId>`, `/.pi/worktrees/` in
+    `.git/info/exclude`. Based on the main checkout's HEAD (a warning when it has uncommitted changes);
+    `.worktreeinclude` files copied. Changed = uncommitted or untracked files or new commits: kept, the result gives
+    path, branch, changed files and commits; unchanged: removed with its branch after each exchange. No auto-commit,
+    merge or sweep; `/subagents worktrees` lists and removes kept ones. A resume re-enters its worktree.
+11. Memory (`memory: user|project|local`): Claude Code's directories (`~/.claude/agent-memory/<name>/`,
+    `.claude/agent-memory/<name>/`, `.claude/agent-memory-local/<name>/`), always under the main checkout. First 200
+    lines / 25 KB of `MEMORY.md` in the prompt plus our own instructions. Read/Write/Edit enabled automatically unless
+    `disallowedTools` denies Write/Edit (then read-only, with a warning); the risk is documented. The local dir goes
+    into `.git/info/exclude`.
+12. Polish: `color` on panel rows and the screen header; model and effort on the screen and in `/subagents`;
+    `/subagents stop` (all) and a shortcut.
