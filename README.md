@@ -256,9 +256,10 @@ The real suite drives the Agent tool in-process with real children: the pinned p
 real Claude Haiku 5.5. It needs Anthropic credentials in `~/.pi/agent/auth.json`; so do the `test/tui` tests, the evals and the stress test
 (the panel and fault suites need none). Each test gets a temp repo, a temp
 HOME and a temp pi agent dir (auth linked from yours, no packages), so your own setup does not leak in. Assertions
-read structure and side effects (the child's session file, files it wrote), never wording. The v1 suites (54 real and 13 fault tests)
-ran in about 35 s and cost about $0.01 (measured with `PIPIPI_COST_LOG=<file> npm test`,
-which makes each test file append its sum of `usage.cost.total`). The fault suite covers what real pi will not do on
+read structure and side effects (the child's session file, files it wrote), never wording. `npm test` runs 97 tests (69 real, 15
+fault, 6 panel, 7 tui) in about 40 s wall, files in parallel. The in-process real suite costs about $0.02 per run
+(measured with `PIPIPI_COST_LOG=<file> npm test`, which makes each real test file append its sum of
+`usage.cost.total`); the tui tests add roughly a cent each. The fault suite covers what real pi will not do on
 demand: malformed JSON line, missing session header, crash with stderr, provider-error retries, a child that never
 settles or never exits, exact usage arithmetic.
 
