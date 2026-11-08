@@ -3,7 +3,7 @@
 // the keys it uses (↑ ↓ enter x esc) and lets every other key through to pi.
 
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { isKeyRelease, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Config } from "./config.ts";
 import { COLORS, ICONS, label, registry, type SubagentRecord } from "./registry.ts";
 import { openSubagentScreen } from "./subagent-screen.ts";
@@ -63,6 +63,9 @@ export class Panel {
 
   // Returns true when the key was consumed.
   handleKey(data: string, editorEmpty: boolean): boolean {
+    // Kitty-protocol terminals send a release after every press, and pi's input listeners get both (components do
+    // not). A release is never an action; while the panel has focus it is ours, so swallow it.
+    if (isKeyRelease(data)) return this.focused;
     const rows = this.rows();
     if (!this.focused) {
       if (rows.length > 0 && editorEmpty && matchesKey(data, "down")) {

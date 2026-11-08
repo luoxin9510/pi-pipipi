@@ -26,9 +26,13 @@ test("the panel lists both running subagents, updates them, takes focus, and dro
     // a row updates: turns and last tool
     await pi.waitFor((s) => /running · general-purpose\(sleepy one\) · [1-9]\d* turns · bash/.test(s), 60_000);
 
-    // ↓ on the empty editor focuses the panel; the first row is selected and the hint shows
+    // ↓ on the empty editor focuses the panel; the first row is selected and the hint shows. Kitty-protocol terminals
+    // follow every press with a release (CSI 1;1:3B), which must not move the selection on to the second row.
     pi.press("down");
+    pi.type("\x1b[1;1:3B");
     let v = await pi.waitFor("esc back to editor");
+    await new Promise((r) => setTimeout(r, 300)); // let a wrongly handled release redraw before checking
+    v = pi.viewport();
     assert.match(v, /▸ .*sleepy one/);
     pi.press("down");
     v = await pi.waitFor((s) => /▸ .*sleepy two/.test(s));

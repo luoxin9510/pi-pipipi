@@ -87,6 +87,31 @@ test("focus: only ↓ on an empty editor enters; its keys are consumed only whil
   panel.dispose();
 });
 
+test("kitty key releases do nothing: one ↓ press selects the first row, a release neither moves nor leaves", () => {
+  // Terminals with the kitty keyboard protocol send a release after each press; pi's input listeners get both.
+  const release = { down: "\x1b[1;1:3B", up: "\x1b[1;1:3A", enter: "\x1b[13;1:3u" };
+  const { panel, opened } = setup("p-kitty");
+  start("p-kitty", "k1", "one");
+  start("p-kitty", "k2", "two");
+  assert.equal(panel.handleKey(release.down, true), false, "a release alone does not focus");
+  assert.equal(panel.hasFocus(), false);
+
+  panel.handleKey(KEY.down, true);
+  assert.equal(panel.handleKey(release.down, true), true, "the release of the focusing ↓ is consumed");
+  assert.equal(panel.hasFocus(), true);
+  assert.ok(panel.render(100).some((l) => l.startsWith("[sel]▸") && l.includes("Explore(one)")), "still on the first row");
+
+  panel.handleKey(KEY.down, true);
+  panel.handleKey(release.down, true);
+  assert.ok(panel.render(100).some((l) => l.startsWith("[sel]▸") && l.includes("Explore(two)")), "one press, one row");
+  panel.handleKey(KEY.up, true);
+  panel.handleKey(release.up, true);
+  assert.equal(panel.hasFocus(), true, "the release of ↑ does not leave from the first row");
+  panel.handleKey(release.enter, true);
+  assert.deepEqual(opened, [], "a release does not open");
+  panel.dispose();
+});
+
 test("keys the panel does not use pass through while focused (ctrl+c, ctrl+d, text) and give the focus back", () => {
   for (const key of ["\x03", "\x04", "a"]) {
     const session = `p4-${key.charCodeAt(0)}`;
