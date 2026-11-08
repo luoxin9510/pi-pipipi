@@ -10,7 +10,7 @@ import { type Discovery, discoverAgents } from "./discovery.ts";
 import { type CallInput, type ChildSpec, type ParentContext, resolveChild } from "./resolve.ts";
 import { exchange } from "./exchange.ts";
 import { capText, newAgentId, storedAgent } from "./sessions.ts";
-import { planWorktree, type WorktreeOutcome, type WorktreeRef } from "./worktree.ts";
+import { addExclude, gitRoot, planWorktree,type WorktreeOutcome, type WorktreeRef } from "./worktree.ts";
 import { emptyUsage, type Status, STATUSES, usageSchema } from "./runner.ts";
 
 const DEFAULT_AGENT = "general-purpose";
@@ -150,7 +150,15 @@ async function executeAgent(
   if (stored) worktree = stored.worktree;
   else if ((input.isolation ?? def.isolation) === "worktree") worktree = await planWorktree(parent.cwd, agentId);
 
-  const spec = resolveChild(def, input as CallInput, config, parent, { agentId, worktree });
+  // Memory: project and local live under the main checkout (never the agent's worktree); outside a repo, the parent's cwd.
+  let memoryRoot: string | undefined;
+  if (def.memory === "project" || def.memory === "local") {
+    const root = await gitRoot(parent.cwd);
+    memoryRoot = root ?? parent.cwd;
+    if (root && def.memory === "local") await addExclude(root, `/.claude/agent-memory-local/${def.name}/`);
+  }
+
+  const spec = resolveChild(def, input as CallInput, config, parent, { agentId, worktree, memoryRoot });
   scripts.addAgent(toolCallId, spec.agentId);
   if (stored && input.isolation !== undefined) {
     spec.warnings.push(`"isolation" was ignored on a resume: the agent keeps how it was started (${worktree ? "in a worktree" : "without isolation"})`);

@@ -58,12 +58,23 @@ export async function planWorktree(cwd: string, agentId: string): Promise<Worktr
   return { root, path: join(root, ".pi", "worktrees", agentId), branch: `pipipi/${agentId}`, base };
 }
 
-async function excludeWorktrees(root: string): Promise<void> {
+// Append `line` to the repository's info/exclude once (also used for local agent memory).
+export async function addExclude(root: string, line: string): Promise<void> {
   const file = resolve(root, await gitLine(root, ["rev-parse", "--git-path", "info/exclude"]));
   const text = existsSync(file) ? readFileSync(file, "utf8") : "";
-  if (text.split("\n").includes(EXCLUDE_LINE)) return;
+  if (text.split("\n").includes(line)) return;
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${EXCLUDE_LINE}\n`);
+  writeFileSync(file, `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${line}\n`);
+}
+
+// The git root of `cwd`, or undefined outside a repository.
+export async function gitRoot(cwd: string): Promise<string | undefined> {
+  try {
+    return await gitLine(cwd, ["rev-parse", "--show-toplevel"]);
+  } catch (err) {
+    if ((err as Error).message.includes("not installed")) throw err;
+    return undefined;
+  }
 }
 
 // Claude Code's rules: gitignore syntax, and only files that match a pattern and are also gitignored are copied.
@@ -90,7 +101,7 @@ export function ensureWorktree(ref: WorktreeRef): Promise<string[]> {
     if ((await git(ref.root, ["branch", "--list", ref.branch])).trim() !== "") {
       throw new Error(`worktree ${ref.path} was removed but its branch ${ref.branch} still exists; remove the branch with "git branch -D ${ref.branch}" or restore the worktree with "git worktree add ${ref.path} ${ref.branch}"`);
     }
-    await excludeWorktrees(ref.root);
+    await addExclude(ref.root, EXCLUDE_LINE);
     await git(ref.root, ["worktree", "prune"]);
     if ((await git(ref.root, ["status", "--porcelain"])).trim() !== "") {
       warnings.push("the main checkout has uncommitted changes; the isolated agent does not see them");

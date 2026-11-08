@@ -17,6 +17,7 @@ export interface AgentDefinition {
   skills?: string[];
   omitClaudeMd?: boolean;
   codemode?: boolean; // false: this agent keeps direct tools instead of codemode-only
+  memory?: "user" | "project" | "local"; // persistent memory directory (Claude Code's paths)
   isolation?: "worktree"; // run in its own git worktree (the Agent call's isolation wins)
   source: string;
   inert: string[];
@@ -27,7 +28,7 @@ export type ParseResult = { ok: true; def: AgentDefinition } | { ok: false; reas
 // Tier B (mapped in v2) and tier C (no effect) fields: parsed, then reported as having no effect.
 const INERT_FIELDS = [
   "mcpServers", "autoCompactWindow", "color",
-  "permissionMode", "hooks", "memory", "background", "initialPrompt", "experimental",
+  "permissionMode", "hooks", "background", "initialPrompt", "experimental",
 ];
 
 export const inertNotice = (field: string) => `field "${field}" has no effect in pi-pipipi`;
@@ -86,6 +87,7 @@ export function parseDefinition(source: string, text: string): ParseResult {
       skills: nameList(f.skills, "skills"),
       omitClaudeMd: optional<boolean>(f.omitClaudeMd, "omitClaudeMd", (v) => typeof v === "boolean", "true or false"),
       codemode: optional<boolean>(f.codemode, "codemode", (v) => typeof v === "boolean", "true or false"),
+      memory: optional<"user" | "project" | "local">(f.memory, "memory", (v) => v === "user" || v === "project" || v === "local", "user | project | local"),
       isolation: optional<"worktree">(f.isolation, "isolation", (v) => v === "worktree", "worktree"),
       source,
       inert: INERT_FIELDS.filter((k) => k in f),
