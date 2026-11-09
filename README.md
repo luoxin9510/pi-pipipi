@@ -1,5 +1,9 @@
 # pi-pipipi
 
+> **Frozen.** pi-pipipi has been merged into [xin-pi](https://github.com/luoxin9510/xin-pi) as the built-in `subagent`
+> extension (`packages/xpi-coding-agent/src/extensions/subagent/`). Development continues there; this repo stays at
+> its last state for reference.
+
 Claude Code-compatible subagents for [pi](https://pi.dev). The extension registers one tool, `Agent`, for codemode
 scripts. Each call runs an agent definition in its own `pi` subprocess and returns a structured result, so a script can
 run agents in parallel and filter what reaches the model. In interactive pi you can watch the subagents in a panel
